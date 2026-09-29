@@ -339,14 +339,15 @@ export function LayerShape({ layerKey, gid }) {
   }
 }
 
-function LayerSvg({ layerKey, gid }) {
+// Слой перерисовывается только при смене ингредиента: SVG с текстурами — самая дорогая часть экрана
+const LayerSvg = React.memo(function LayerSvg({ layerKey, gid }) {
   const { h } = layerBox(layerKey);
   return (
     <svg width="300" height={h} viewBox={`0 0 300 ${h}`} style={{ overflow: 'visible', display: 'block' }} aria-hidden="true">
       <LayerShape layerKey={layerKey} gid={gid} />
     </svg>
   );
-}
+});
 
 // Миниатюра ингредиента для карточек
 export function IngredientThumb({ ing, size = 84 }) {

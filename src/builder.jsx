@@ -10,9 +10,9 @@ export function TypeBadge({ weight, big = false }) {
   return <span className={`type-badge tone-${t.tone} ${big ? 'big' : ''}`}>{t.tone === 'fire' && <Icon name="local_fire_department" fill />}{t.label}</span>;
 }
 
-function StatsRow({ st, compact }) {
+function StatsRow({ st }) {
   return (
-    <div className={`stats-row ${compact ? 'compact' : ''}`}>
+    <div className="stats-row">
       <div className="stat main">
         <span className="stat-v"><Num value={st.total} format={(v) => fmtPrice(v).replace(/\s?сум$/, '')} /><small> сум</small></span>
         <span className="stat-l">Цена</span>
@@ -249,7 +249,7 @@ function ChallengeTicker({ st }) {
   const pct = Math.min(100, (near.p / near.c.target) * 100);
   return (
     <div className={`ticker ${done ? 'done' : ''}`}>
-      <span>{near.c.icon}</span>
+      <Icon name={near.c.icon} />
       <span className="ticker-t">{done ? `${near.c.title}: условие выполнено — сохрани рецепт, чтобы получить бейдж` : `${near.c.title}: ${Math.round(near.p).toLocaleString('ru-RU')} / ${near.c.target.toLocaleString('ru-RU')} ${near.c.unit}`}</span>
       <span className="ticker-bar"><i style={{ width: `${pct}%` }} /></span>
     </div>
@@ -268,6 +268,9 @@ function ActionRow() {
   );
 }
 
+// Бургер из корзины открыт на правку — кнопка обновляет ту же позицию
+const cartLabel = (S) => (S.editingCid && S.cart.some((c) => c.cid === S.editingCid) ? 'Обновить в корзине' : 'Добавить в корзину');
+
 function CartBar({ st }) {
   const { A, S } = useApp();
   return (
@@ -276,9 +279,7 @@ function CartBar({ st }) {
         <span className="cb-v"><Num value={st.total} format={fmtPrice} /></span>
         <span className="cb-l">{st.count} {plural(st.count, 'слой', 'слоя', 'слоёв')} · {fmtWeight(st.weight)}</span>
       </div>
-      <button className="btn primary" onClick={A.addCurrentToCart} disabled={st.count === 0}>
-        {S.editingId ? 'В корзину' : 'Добавить в корзину'}
-      </button>
+      <button className="btn primary" onClick={A.addCurrentToCart} disabled={st.count === 0}>{cartLabel(S)}</button>
     </div>
   );
 }
@@ -300,7 +301,15 @@ export default function Builder() {
   const st = useMemo(() => stats(S.layers), [S.layers, cfgRev]);
   const [cat, setCat] = useState('meat');
   const [tab, setTab] = useState('ing');
+  // Компактная сцена при прокрутке панели. Анимируется только transform (без пересчёта раскладки
+  // и перерисовки слоёв), а гистерезис 8/48 px не даёт сцене дёргаться туда-обратно на границе.
   const [compact, setCompact] = useState(false);
+  const compactRef = useRef(false);
+  const onPanelScroll = (e) => {
+    const y = e.currentTarget.scrollTop;
+    const next = compactRef.current ? y > 8 : y > 48;
+    if (next !== compactRef.current) { compactRef.current = next; setCompact(next); }
+  };
   const counts = useLayerCounts(S.layers);
   const currentBun = S.layers.map((l) => parseKey(l.key)).find((p) => p.role === 'top' || p.role === 'bottom')?.ing.id;
   useMonsterWatch(st);
@@ -327,9 +336,11 @@ export default function Builder() {
           <TypeBadge weight={st.weight} />
           {title && <span className="editing"><Icon name="edit" /> {title}</span>}
         </div>
-        <BurgerStack layers={S.layers} maxH={Math.max(120, stageSize.h)} maxW={Math.min(stageSize.w - 90, isDesktop ? 460 : 320)} maxScale={isDesktop ? 1.6 : 1.05} ruler cm={st.cm} />
+        <div className="stack-zoom">
+          <BurgerStack layers={S.layers} maxH={Math.max(120, stageSize.h)} maxW={Math.min(stageSize.w - 90, isDesktop ? 460 : 320)} maxScale={isDesktop ? 1.6 : 1.05} ruler cm={st.cm} />
+        </div>
       </div>
-      <StatsRow st={st} compact={compact && !isDesktop} />
+      <StatsRow st={st} />
     </div>
   );
 
@@ -357,17 +368,20 @@ export default function Builder() {
             <div className="sum-line"><span>Ингредиенты</span><b>{fmtPrice(st.price)}</b></div>
             {st.packaging > 0 && <div className="sum-line"><span>Спецупаковка</span><b>{fmtPrice(st.packaging)}</b></div>}
             <div className="sum-line total"><span>Итого</span><b><Num value={st.total} format={fmtPrice} /></b></div>
-            <button className="btn primary block" onClick={A.addCurrentToCart} disabled={st.count === 0}>Добавить в корзину</button>
+            <button className="btn primary block" onClick={A.addCurrentToCart} disabled={st.count === 0}>{cartLabel(S)}</button>
           </div>
         </aside>
       </div>
     );
   }
 
+  // Насколько сжимается сцена: панель и цифры поднимаются на shift, бургер уменьшается в zoom раз
+  const shift = Math.round(Math.max(120, stageSize.h) * 0.42);
+  const zoom = (Math.max(120, stageSize.h) - shift) / Math.max(120, stageSize.h);
   return (
-    <div className={`builder mob ${compact ? 'is-compact' : ''}`}>
+    <div className={`builder mob ${compact ? 'is-compact' : ''}`} style={{ '--shift': `${shift}px`, '--zoom': zoom }}>
       {stage}
-      <div className="b-panel" onScroll={(e) => setCompact(e.currentTarget.scrollTop > 30)}>
+      <div className="b-panel" onScroll={onPanelScroll}>
         <div className="seg" role="tablist">
           <button role="tab" aria-selected={tab === 'ing'} className={tab === 'ing' ? 'on' : ''} onClick={() => setTab('ing')}>Ингредиенты</button>
           <button role="tab" aria-selected={tab === 'layers'} className={tab === 'layers' ? 'on' : ''} onClick={() => setTab('layers')}>Слои · {S.layers.length}</button>

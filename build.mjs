@@ -39,7 +39,7 @@ const PAGES = [
 <!--BL_CONFIG-->`,
   },
   {
-    entry: 'src/staff.jsx', out: 'staff.html',
+    entry: 'src/staffMain.jsx', out: 'staff.html',
     title: 'BurgerLab — касса',
     head: `<meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#0F0F0F">

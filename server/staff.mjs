@@ -1,6 +1,6 @@
 // API кассы и админ-панели: вход сотрудников, роли, заказы, стоп-лист, меню, настройки, отчёты.
 import crypto from 'crypto';
-import { hashPassword, checkPassword, signToken, verifyToken } from './auth.mjs';
+import { hashPassword, checkPassword, signToken, verifyToken, validateInitData } from './auth.mjs';
 import {
   getRev, getConfRev, getConf, activeOrders, listOrders, getOrder, setStop, setMenu, setSettings,
   staffList, getStaff, findStaffByLogin, saveStaff,
@@ -32,10 +32,23 @@ export function ensureAdmin() {
   console.log(`✔ Администратор кассы: логин «${login}»${process.env.STAFF_ADMIN_PASSWORD ? ' (пароль из .env)' : `, пароль «${password}» — смените его в админ-панели`}`);
 }
 
-export function createStaffApi({ secret, send, readBody, tooMany }) {
+// Администратор из Telegram (ADMIN_IDS): входит в панель внутри Mini App по подписи initData, без пароля
+const tgAdmin = (t) => ({
+  id: `tg:${t.id}`, login: t.username ? `@${t.username}` : `tg${t.id}`, name: [t.first_name, t.last_name].filter(Boolean).join(' ') || 'Администратор',
+  role: 'admin', active: true, tg: true,
+});
+
+export function createStaffApi({ secret, send, readBody, tooMany, botToken, adminIds = [] }) {
   const who = (u) => `${u.name} (${u.login})`;
 
   function auth(req, perm) {
+    const initData = req.headers['x-telegram-init-data'];
+    if (initData) {
+      const a = validateInitData(initData, botToken);
+      if (!a) fail(401, 'Откройте приложение заново');
+      if (!adminIds.includes(a.user.id)) fail(403, 'Раздел доступен только администраторам');
+      return tgAdmin(a.user);
+    }
     const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const p = verifyToken(token, secret);
     const u = p && getStaff(p.uid);

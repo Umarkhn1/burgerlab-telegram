@@ -113,12 +113,12 @@ function toLayersMemo(keys) {
   return cache.get(k);
 }
 
-export function Stepper({ qty, onMinus, onPlus, disabled, label }) {
+export function Stepper({ qty, onMinus, onPlus, disabled, disabledPlus, label }) {
   return (
     <div className={`stepper ${qty > 0 ? 'on' : ''}`}>
       <button onClick={onMinus} disabled={qty === 0 || disabled} aria-label={`Убрать: ${label}`}><Icon name="remove" /></button>
       <span className="qty" aria-live="polite">{qty}</span>
-      <button onClick={onPlus} disabled={disabled} aria-label={`Добавить: ${label}`}><Icon name="add" /></button>
+      <button onClick={onPlus} disabled={disabled || disabledPlus} aria-label={`Добавить: ${label}`}><Icon name="add" /></button>
     </div>
   );
 }

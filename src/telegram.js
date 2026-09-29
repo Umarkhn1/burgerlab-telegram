@@ -129,3 +129,4 @@ export const apiConfig = (signal) => api('/config', { signal });
 export const apiCreateOrder = (payload) => api('/orders', { method: 'POST', body: JSON.stringify(payload) });
 export const apiGetOrder = (id) => api(`/orders/${id}`);
 export const apiMe = () => api('/me');
+export const apiMyOrders = () => api('/orders');

@@ -1,6 +1,6 @@
-// Касса и админ-панель BurgerLab (страница /staff). Стиль и компоненты — как в Mini App.
+// Касса и админ-панель BurgerLab: страница /staff (вход по логину) и раздел «Админ» внутри Mini App
+// (embedded: вход по подписи Telegram для ADMIN_IDS). Стиль и компоненты — как в Mini App.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
 import { STATUSES, MODES, CANCEL_REASONS, STOP, applyMenu, applySettings, applyStop } from './data.js';
 import { fmtPrice, fmtTime, fmtDateTime, fmtWeight, fmtCm, layerName, flowOf, nextStatus, isClosed, deadlines, statusInfo, atTime } from './calc.js';
 import { Sheet, Toasts, Icon } from './ui.jsx';
@@ -26,12 +26,12 @@ const SECTIONS = [
 ];
 const ROLE_NAMES = { admin: 'Администратор', cashier: 'Кассир' };
 
-async function request(path, { method = 'GET', body, token } = {}) {
+async function request(path, { method = 'GET', body, token, initData } = {}) {
   let res;
   try {
     res = await fetch(`/api${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(initData ? { 'X-Telegram-Init-Data': initData } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -47,9 +47,10 @@ const store = (k, v) => { try { v == null ? localStorage.removeItem(k) : localSt
 const loadSession = () => { try { return JSON.parse(read(SESSION_KEY, 'null')); } catch { return null; } };
 
 // Тема: светлая (по умолчанию) или тёмная — те же токены, что в Mini App
-function useTheme() {
-  const [theme, setTheme] = useState(() => read(THEME_KEY, 'light'));
-  useEffect(() => { document.documentElement.dataset.theme = theme; store(THEME_KEY, theme); }, [theme]);
+// Внутри Mini App тему задаёт Telegram — не трогаем её
+function useTheme(embedded) {
+  const [theme, setTheme] = useState(() => (embedded ? document.documentElement.dataset.theme || 'light' : read(THEME_KEY, 'light')));
+  useEffect(() => { if (embedded) return; document.documentElement.dataset.theme = theme; store(THEME_KEY, theme); }, [theme]);
   return [theme, setTheme];
 }
 
@@ -136,7 +137,7 @@ function Login({ onLogin, theme, setTheme }) {
 }
 
 // ── Выпадающее меню ──
-function MenuDropdown({ open, onClose, user, view, setView, badges, sound, setSound, theme, setTheme, logout }) {
+function MenuDropdown({ open, onClose, user, view, setView, badges, sound, setSound, theme, setTheme, logout, embedded }) {
   useEffect(() => {
     if (!open) return;
     const key = (e) => e.key === 'Escape' && onClose();
@@ -170,15 +171,15 @@ function MenuDropdown({ open, onClose, user, view, setView, badges, sound, setSo
             <Icon name={sound ? 'notifications_active' : 'notifications_off'} /><span>Звук новых заказов</span>
             <Switch on={sound} onChange={(v) => { unlockAudio(); setSound(v); if (v) chime(); }} label="Звук" />
           </div>
-          <div className="st-mrow">
+          {!embedded && <div className="st-mrow">
             <Icon name={theme === 'dark' ? 'dark_mode' : 'light_mode'} /><span>Тема</span>
             <div className="seg xs">
               <button className={theme === 'light' ? 'on' : ''} onClick={() => setTheme('light')} aria-label="Светлая"><Icon name="light_mode" /></button>
               <button className={theme === 'dark' ? 'on' : ''} onClick={() => setTheme('dark')} aria-label="Тёмная"><Icon name="dark_mode" /></button>
             </div>
-          </div>
+          </div>}
         </div>
-        <button className="st-mi danger" onClick={logout}><Icon name="logout" /><span>Выйти</span></button>
+        {!embedded && <button className="st-mi danger" onClick={logout}><Icon name="logout" /><span>Выйти</span></button>}
       </div>
     </>
   );
@@ -440,9 +441,11 @@ function Clock() {
   return <span className="st-clock">{fmtTime(now)}</span>;
 }
 
-function StaffApp() {
-  const [theme, setTheme] = useTheme();
-  const [session, setSession] = useState(loadSession);
+export function StaffApp({ embedded = false, initData = '' }) {
+  const [theme, setTheme] = useTheme(embedded);
+  // embedded: сессия — это подпись Telegram, пользователь приходит из /staff/me
+  const [session, setSession] = useState(() => (embedded ? { token: '', user: null } : loadSession()));
+  const [denied, setDenied] = useState('');
   const [view, setView] = useState('desk');
   const [menuOpen, setMenuOpen] = useState(false);
   const [orders, setOrders] = useState([]);
@@ -469,9 +472,13 @@ function StaffApp() {
   const logout = useCallback(() => { store(SESSION_KEY, null); setSession(null); setOrders([]); setMenuOpen(false); seen.current = null; revRef.current = 0; }, []);
 
   const api = useCallback(async (path, opts = {}) => {
+    if (embedded) {
+      try { return await request(path, { ...opts, initData }); }
+      catch (e) { if (e.status === 401 || e.status === 403) setDenied(e.message); throw e; }
+    }
     try { return await request(path, { ...opts, token: session?.token }); }
     catch (e) { if (e.status === 401) { logout(); toast('Сессия истекла — войдите снова', 'err'); } throw e; }
-  }, [session?.token]);
+  }, [session?.token, embedded, initData]);
 
   const reloadConfig = useCallback(async () => {
     const c = await request('/config');
@@ -482,6 +489,10 @@ function StaffApp() {
 
   // Проверить сессию и права при входе
   useEffect(() => {
+    if (embedded) {
+      api('/staff/me').then((d) => setSession({ token: '', user: d.user })).catch((e) => setDenied((x) => x || (e.status ? e.message : 'Нет связи с сервером')));
+      return;
+    }
     if (!session?.token) return;
     api('/staff/me').then((d) => { const s = { ...session, user: d.user }; setSession(s); store(SESSION_KEY, s); }).catch(() => {});
     reloadConfig().catch(() => {});
@@ -495,7 +506,7 @@ function StaffApp() {
 
   // Синхронизация с сервером каждые 3 секунды. Касса получает новые заказы и отмечает их «Заказ на кассе».
   useEffect(() => {
-    if (!session?.token || !user?.perms.includes('orders')) return;
+    if ((!embedded && !session?.token) || !user?.perms.includes('orders')) return;
     let stop = false;
     const tick = async () => {
       try {
@@ -513,7 +524,7 @@ function StaffApp() {
             setFreshIds((s) => new Set([...s, ...fresh.map((o) => o.id)]));
             setTimeout(() => setFreshIds((s) => { const n = new Set(s); fresh.forEach((o) => n.delete(o.id)); return n; }), 15000);
             toast(`Новый заказ ${fresh.map((o) => `#${o.id}`).join(', ')}`, 'ok');
-            try { if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification('BurgerLab: новый заказ', { body: fresh.map((o) => `#${o.id} · ${fmtPrice(o.total)}`).join('\n') }); } catch { /* ignore */ }
+            try { if (!embedded && document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification('BurgerLab: новый заказ', { body: fresh.map((o) => `#${o.id} · ${fmtPrice(o.total)}`).join('\n') }); } catch { /* ignore */ }
           }
         }
         seen.current = new Set([...(seen.current || []), ...ids]);
@@ -530,7 +541,7 @@ function StaffApp() {
   // Пока есть непринятые заказы — сигнал каждые 8 секунд и счётчик во вкладке браузера
   const waiting = orders.filter((o) => NEW.includes(o.status)).length;
   useEffect(() => {
-    document.title = waiting ? `(${waiting}) Новые заказы — BurgerLab` : 'BurgerLab — касса';
+    if (!embedded) document.title = waiting ? `(${waiting}) Новые заказы — BurgerLab` : 'BurgerLab — касса';
     if (!waiting || !sound) return;
     chime();
     const t = setInterval(chime, 8000);
@@ -561,23 +572,34 @@ function StaffApp() {
     try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch { /* ignore */ }
   };
 
-  if (!session?.token || !user) return <><Login onLogin={onLogin} theme={theme} setTheme={setTheme} /><Toasts items={toasts} /></>;
+  if (embedded && !user) {
+    return (
+      <div className="st st-app embedded">
+        <div className="st-gate">
+          <Icon name={denied ? 'lock' : 'hourglass_top'} />
+          <b>{denied ? 'Нет доступа' : 'Открываем админ-панель…'}</b>
+          {denied && <span className="muted-t">{denied}</span>}
+        </div>
+      </div>
+    );
+  }
+  if (!embedded && (!session?.token || !user)) return <><Login onLogin={onLogin} theme={theme} setTheme={setTheme} /><Toasts items={toasts} /></>;
   const sec = SECTIONS.find((s) => s.id === view) || SECTIONS[0];
   const stopCount = Object.keys(STOP).length;
   const P = { api, toast, user, openOrder: setOpenId, reloadConfig, cfgRev, rev };
 
   return (
-    <div className={`st st-app ${waiting ? 'alarm' : ''}`}>
+    <div className={`st st-app ${embedded ? 'embedded' : ''} ${waiting ? 'alarm' : ''}`}>
       <header className="st-bar">
-        <Logo />
+        {!embedded && <Logo />}
         <span className="st-sec"><Icon name={sec.icon} />{sec.t}</span>
         <div className="st-bar-r">
           {waiting > 0 && <button className="st-alert" onClick={() => setView('desk')}><Icon name="notifications_active" fill />{waiting}<span className="hide-s">&nbsp;{waiting === 1 ? 'новый' : 'новых'}</span></button>}
           <span className={`st-net ${online ? '' : 'off'}`} title={online ? 'Связь с сервером есть' : 'Нет связи с сервером'}><i />{online ? 'онлайн' : 'нет связи'}</span>
-          <Clock />
+          {!embedded && <Clock />}
           <button className={`icon-btn st-burger ${menuOpen ? 'on' : ''}`} onClick={() => setMenuOpen(!menuOpen)} aria-label="Меню" aria-expanded={menuOpen}><Icon name={menuOpen ? 'close' : 'menu'} /></button>
           <MenuDropdown open={menuOpen} onClose={() => setMenuOpen(false)} user={user} view={view} setView={setView}
-            badges={{ desk: waiting, stop: stopCount }} sound={sound} setSound={setSound} theme={theme} setTheme={setTheme} logout={logout} />
+            badges={{ desk: waiting, stop: stopCount }} sound={sound} setSound={setSound} theme={theme} setTheme={setTheme} logout={logout} embedded={embedded} />
         </div>
       </header>
       {!online && <div className="st-offline"><Icon name="wifi_off" />Нет связи с сервером. Заказы не потеряются: касса получит их, как только связь восстановится.</div>}
@@ -601,4 +623,3 @@ function StaffApp() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<StaffApp />);

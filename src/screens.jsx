@@ -351,12 +351,13 @@ export function Profile() {
       <h2 className="sec-title">Разделы</h2>
       <div className="menu-list">
         <button onClick={() => A.go('saved')}><span><Icon name="bookmark" /> Мои бургеры</span><small>{S.saved.length}</small></button>
-        <button onClick={() => A.go('challenges')}><span><Icon name="emoji_events" /> Challenges</span><small>{Object.keys(S.badges).length}/4</small></button>
+        <button onClick={() => A.go('challenges')}><span><Icon name="emoji_events" /> Challenges</span><small>{Object.keys(S.badges).length}/{CHALLENGES.length}</small></button>
         <button onClick={() => A.go('party')}><span><Icon name="celebration" /> Party Burger</span><small>2–15+ гостей</small></button>
         {!inTelegram && <button onClick={() => A.go('kitchen')}><span><Icon name="soup_kitchen" /> Экран кухни</span><small>демо</small></button>}
         {!inTelegram && <button onClick={() => A.go('admin')}><span><Icon name="bar_chart" /> Админ-панель</span><small>демо</small></button>}
         {!inTelegram && <button onClick={A.installHint}><span><Icon name="install_mobile" /> Установить на телефон</span><small>PWA</small></button>}
-        <button className="danger" onClick={A.resetDemo}><span><Icon name="refresh" /> Сбросить демо-данные</span><small>корзина, рецепты, заказы</small></button>
+        {inTelegram && S.profile.admin && <button onClick={() => A.go('panel')}><span><Icon name="admin_panel_settings" /> Админ-панель</span><small>касса, меню, отчёты</small></button>}
+        <button className="danger" onClick={A.resetDemo}><span><Icon name="refresh" /> {inTelegram ? 'Очистить данные на устройстве' : 'Сбросить демо-данные'}</span><small>{inTelegram ? 'корзина, рецепты, бейджи' : 'корзина, рецепты, заказы'}</small></button>
       </div>
     </div>
   );

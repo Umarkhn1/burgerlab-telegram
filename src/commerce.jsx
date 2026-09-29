@@ -12,8 +12,9 @@ import { PartyBurgerArt } from './visuals.jsx';
 export { cartTotals } from './calc.js';
 
 function CartItem({ it }) {
-  const { A } = useApp();
+  const { S, A } = useApp();
   const issues = itemIssues(it);
+  const editing = S.editingCid === it.cid;
   return (
     <article className={`cart-item ${issues.length ? 'bad' : ''}`}>
       <div className="ci-art">
@@ -29,12 +30,13 @@ function CartItem({ it }) {
           {it.kind === 'extra' && it.note}
         </div>
         {it.packaging > 0 && <div className="ci-note">Включая спецупаковку {fmtPrice(it.packaging)}</div>}
+        {editing && <div className="ci-note"><Icon name="edit" /> Открыт в конструкторе — правки ещё не сохранены · <button className="link sm" onClick={A.cancelCartEdit}>Отменить</button></div>}
         {issues.length > 0 && <div className="ci-issue"><Icon name="warning" /> {issues.join(', ')}. {it.kind === 'burger' ? 'Измени бургер или убери его' : 'Убери позицию'}</div>}
         <div className="ci-foot">
           <b>{it.qty > 1 && <small className="ci-unit">{it.qty} × {fmtPrice(it.unit)} = </small>}{fmtPrice(it.unit * it.qty)}</b>
           <div className="ci-ctrl">
             {it.kind === 'burger' && <button className="link sm" onClick={() => A.editCartItem(it)}>Изменить</button>}
-            <Stepper qty={it.qty} label={it.name} onMinus={() => A.cartQty(it.cid, -1)} onPlus={() => A.cartQty(it.cid, 1)} />
+            <Stepper qty={it.qty} label={it.name} onMinus={() => A.cartQty(it.cid, -1)} onPlus={() => A.cartQty(it.cid, 1)} disabledPlus={it.qty >= 20} />
           </div>
         </div>
       </div>

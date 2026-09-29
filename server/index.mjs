@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { validateInitData } from './auth.mjs';
-import { loadStore, createOrder, getOrder, findByIdem, updateOrder, activeOrders, getConf, getConfRev, flush, getUser } from './store.mjs';
+import { loadStore, createOrder, getOrder, findByIdem, updateOrder, activeOrders, getConf, getConfRev, flush, getUser, ordersOfUser } from './store.mjs';
 import { buildOrder, publicOrder, onOrderEvent, OrderError } from './orders.mjs';
 import { createStaffApi, ensureAdmin } from './staff.mjs';
 import { webhookCallback } from 'grammy';
@@ -25,7 +25,10 @@ const {
 if (!BOT_TOKEN) { console.error('✖ Укажите BOT_TOKEN в файле .env (получить у @BotFather)'); process.exit(1); }
 if (!WEBAPP_URL || !WEBAPP_URL.startsWith('https://')) { console.error('✖ Укажите WEBAPP_URL в .env — публичный HTTPS-адрес этого сервера'); process.exit(1); }
 
-const adminIds = ADMIN_IDS.split(',').map((s) => Number(s.trim())).filter(Boolean);
+// Администраторы в Telegram: кнопки кухни, оповещения, /today и раздел «Админ» в Mini App.
+// Если ADMIN_IDS не задан — используются владельцы по умолчанию.
+const DEFAULT_ADMIN_IDS = '743813399,5221460399';
+const adminIds = (ADMIN_IDS.trim() || DEFAULT_ADMIN_IDS).split(',').map((s) => Number(s.trim())).filter(Boolean);
 const webappUrl = WEBAPP_URL.replace(/\/+$/, '') + '/';
 const staffSecret = process.env.STAFF_SECRET || crypto.createHash('sha256').update(`burgerlab-staff:${BOT_TOKEN}`).digest('hex');
 
@@ -74,7 +77,7 @@ const readBody = (req) => new Promise((resolve, reject) => {
   req.on('error', reject);
 });
 
-const staffApi = createStaffApi({ secret: staffSecret, send, readBody, tooMany });
+const staffApi = createStaffApi({ secret: staffSecret, send, readBody, tooMany, botToken: BOT_TOKEN, adminIds });
 
 // Публичная часть настроек: меню, стоп-лист и параметры, нужные приложению
 const publicConfig = () => {
@@ -146,7 +149,12 @@ const server = http.createServer(async (req, res) => {
       // Данные клиента из бота: номер телефона и геолокация, которыми он поделился
       if (req.method === 'GET' && url.pathname === '/api/me') {
         const u = getUser(user.id);
-        return send(res, 200, { phone: u?.phone || '', name: u?.name || '', location: u?.location || null, address: u?.address || '' });
+        return send(res, 200, { phone: u?.phone || '', name: u?.name || '', location: u?.location || null, address: u?.address || '', admin: adminIds.includes(user.id) });
+      }
+
+      // Последние заказы клиента — чтобы история была на любом устройстве, а не только там, где оформляли
+      if (req.method === 'GET' && url.pathname === '/api/orders') {
+        return send(res, 200, { orders: ordersOfUser(user.id, 20).map(publicOrder) });
       }
 
       const m = url.pathname.match(/^\/api\/orders\/(\d+)$/);
