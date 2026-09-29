@@ -3,7 +3,7 @@ import { useApp } from './ctx.js';
 import { COMMUNITY, COMMUNITY_FILTERS, CHALLENGES, PARTY, SIZE_PRESETS, STOP, SETTINGS } from './data.js';
 import { stats, toLayers, fmtPrice, fmtWeight, fmtKcal, fmtCm, parseKey, challengeProgress, plural, partyOption, statusInfo } from './calc.js';
 import { BurgerStack, PartyBurgerArt } from './visuals.jsx';
-import { inTelegram } from './telegram.js';
+import { inTelegram, haptic, getThemePref, setThemePref } from './telegram.js';
 import { MiniBurger, Empty, ScreenHead, Icon } from './ui.jsx';
 import { TypeBadge } from './builder.jsx';
 
@@ -309,6 +309,8 @@ export function Party() {
 export function Profile() {
   const { S, A } = useApp();
   const [name, setName] = useState(S.profile.name);
+  const [theme, setTheme] = useState(getThemePref);
+  const pickTheme = (t) => { haptic('select'); setTheme(t); setThemePref(t); };
   return (
     <div className="page">
       <ScreenHead title="Профиль" />
@@ -323,6 +325,13 @@ export function Profile() {
         <div><b>{S.saved.length}</b><span>рецептов</span></div>
         <div><b>{S.orders.length}</b><span>заказов</span></div>
         <div><b>{Object.keys(S.badges).length}</b><span>бейджей</span></div>
+      </div>
+
+      <h2 className="sec-title">Оформление</h2>
+      <div className="seg theme-seg" role="radiogroup" aria-label="Тема">
+        {[['auto', 'contrast', 'Авто'], ['light', 'light_mode', 'Светлая'], ['dark', 'dark_mode', 'Тёмная']].map(([id, icon, t]) => (
+          <button key={id} role="radio" aria-checked={theme === id} className={theme === id ? 'on' : ''} onClick={() => pickTheme(id)}><Icon name={icon} fill={theme === id} />{t}</button>
+        ))}
       </div>
 
       <h2 className="sec-title">Бейджи</h2>

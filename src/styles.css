@@ -1,12 +1,12 @@
 :root {
-  --bg: #FFFFFF;
-  --ink: #000000;
+  --bg: #FCF9F5;
+  --ink: #16120E;
   --ink-2: #4A4642;
   --ink-3: #8C857E;
-  --line: #ECE6DF;
-  --soft: #F6F2ED;
-  --beige: #F3E8DA;
-  --beige-2: #FBF6EF;
+  --line: #EAE2D8;
+  --soft: #F3EDE6;
+  --beige: #F1E4D3;
+  --beige-2: #F8F1E8;
   --orange: #FF5A00;
   --orange-2: #E24F00;
   --orange-soft: #FFF0E6;
@@ -1060,3 +1060,8 @@ details.links .muted-t { margin: 8px 0; }
 .ci-note .link { font-size: 12px; }
 :root[data-theme="dark"] .tabbar { box-shadow: 0 14px 34px -12px rgba(0, 0, 0, .8); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tabbar { box-shadow: 0 14px 34px -12px rgba(0, 0, 0, .8); } }
+
+/* переключатель темы в профиле; смена темы — плавная */
+.theme-seg button { font-size: 13px; padding: 0 6px; gap: 5px; }
+.theme-seg .ms { font-size: 18px; }
+html.theme-anim, html.theme-anim * { transition: background-color .3s ease, border-color .3s ease, color .3s ease !important; }

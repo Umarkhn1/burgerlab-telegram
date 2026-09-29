@@ -6,7 +6,7 @@ export const ICON_NAMES = [
   'home', 'lunch_dining', 'groups', 'shopping_bag', 'person', 'emoji_events', 'bookmark', 'celebration', 'soup_kitchen', 'bar_chart',
   'arrow_back', 'arrow_forward', 'arrow_upward', 'arrow_downward', 'chevron_right', 'expand_more', 'close', 'add', 'remove', 'check',
   'check_circle', 'cancel', 'more_horiz', 'menu', 'search', 'download', 'edit', 'delete', 'refresh', 'share', 'link', 'logout',
-  'visibility', 'visibility_off', 'lock', 'account_circle', 'light_mode', 'dark_mode', 'notifications_active', 'notifications_off',
+  'visibility', 'visibility_off', 'lock', 'account_circle', 'light_mode', 'dark_mode', 'contrast', 'notifications_active', 'notifications_off',
   'warning', 'error', 'schedule', 'timer', 'hourglass_top', 'wifi_off', 'call', 'smartphone', 'location_on', 'my_location', 'map',
   'forum', 'payments', 'credit_card', 'install_mobile', 'qr_code_2', 'key', 'tune', 'history', 'group', 'receipt_long', 'point_of_sale',
   'restaurant_menu', 'block', 'delivery_dining', 'admin_panel_settings', 'directions_run', 'table_restaurant', 'inventory_2', 'storefront', 'add_circle',

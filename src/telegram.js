@@ -7,24 +7,50 @@ export const CONFIG = (typeof window !== 'undefined' && window.BL_CONFIG) || {};
 
 const supports = (v) => !!tg && typeof tg.isVersionAtLeast === 'function' && tg.isVersionAtLeast(v);
 
-function applyTheme() {
-  const dark = tg.colorScheme === 'dark';
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  const bg = dark ? '#0F0F0F' : '#FFFFFF';
+// Тема: 'auto' — как в Telegram (или в системе вне Telegram), 'light' / 'dark' — выбор клиента в профиле
+const THEME_KEY = 'burgerlab:theme';
+export const THEME_BG = { light: '#FCF9F5', dark: '#0F0F0F' };
+export function getThemePref() {
+  try { return ['light', 'dark'].includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : 'auto'; } catch { return 'auto'; }
+}
+
+export function applyTheme() {
+  const pref = getThemePref();
+  const systemDark = typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches;
+  const auto = inTelegram ? (tg.colorScheme === 'dark' ? 'dark' : 'light') : systemDark ? 'dark' : 'light';
+  const theme = pref === 'auto' ? auto : pref;
+  // Вне Telegram «auto» оставляем CSS-медиазапросу — тема меняется вместе с системой
+  if (!inTelegram && pref === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', THEME_BG[theme]));
+  if (!inTelegram) return;
   try {
-    if (supports('6.1')) { tg.setHeaderColor(bg); tg.setBackgroundColor(bg); }
-    if (supports('7.10')) tg.setBottomBarColor(bg);
+    if (supports('6.1')) { tg.setHeaderColor(THEME_BG[theme]); tg.setBackgroundColor(THEME_BG[theme]); }
+    if (supports('7.10')) tg.setBottomBarColor(THEME_BG[theme]);
   } catch { /* старые клиенты */ }
 }
 
+export function setThemePref(pref) {
+  // Короткая плавная смена цветов только в момент переключения (не мешает остальным анимациям)
+  const root = document.documentElement;
+  root.classList.add('theme-anim');
+  clearTimeout(setThemePref.t);
+  setThemePref.t = setTimeout(() => root.classList.remove('theme-anim'), 350);
+  try { pref === 'auto' ? localStorage.removeItem(THEME_KEY) : localStorage.setItem(THEME_KEY, pref); } catch { /* ignore */ }
+  applyTheme();
+}
+
 export function initTelegram() {
-  if (!inTelegram) return;
+  applyTheme();
+  if (!inTelegram) {
+    try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme); } catch { /* старые браузеры */ }
+    return;
+  }
   document.documentElement.classList.add('in-tg');
   tg.ready();
   tg.expand();
   try { if (supports('7.7')) tg.disableVerticalSwipes(); } catch { /* ignore */ }
   try { if (supports('6.2')) tg.enableClosingConfirmation(); } catch { /* ignore */ }
-  applyTheme();
   tg.onEvent('themeChanged', applyTheme);
 }
 

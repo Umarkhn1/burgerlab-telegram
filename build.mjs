@@ -28,7 +28,7 @@ const PAGES = [
     entry: 'src/App.jsx', out: 'index.html',
     title: 'BurgerLab — твой бургер. Твои правила.',
     head: `<meta name="description" content="Собери бургер по слоям, смотри цену, вес, калории и высоту в реальном времени и закажи свою комбинацию.">
-<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#FCF9F5" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0F0F0F" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">

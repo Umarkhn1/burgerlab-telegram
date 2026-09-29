@@ -10,16 +10,16 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Unbounded:wght@500;600;700;800&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0..1,0&icon_names=account_circle,add,add_circle,admin_panel_settings,arrow_back,arrow_downward,arrow_forward,arrow_upward,bakery_dining,bar_chart,block,bolt,bookmark,cake,call,cancel,casino,celebration,change_history,check,check_circle,chevron_right,close,cookie,cooking,credit_card,dark_mode,delete,delivery_dining,directions_run,done_all,download,eco,edit,egg,emoji_events,error,expand_more,fastfood,fitness_center,forum,group,groups,history,home,hourglass_top,icecream,install_mobile,inventory_2,kebab_dining,key,light_mode,link,local_cafe,local_drink,local_fire_department,local_pizza,location_on,lock,logout,lunch_dining,map,menu,more_horiz,my_location,notifications_active,notifications_off,outdoor_grill,package_2,payments,person,point_of_sale,qr_code_2,ramen_dining,receipt,receipt_long,refresh,remove,restaurant,restaurant_menu,rice_bowl,savings,schedule,science,search,share,shopping_bag,smartphone,soup_kitchen,sports_bar,storefront,straighten,table_restaurant,tapas,timer,tune,two_wheeler,visibility,visibility_off,warning,water_bottle,water_drop,whatshot,wifi_off,workspace_premium&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0..1,0&icon_names=account_circle,add,add_circle,admin_panel_settings,arrow_back,arrow_downward,arrow_forward,arrow_upward,bakery_dining,bar_chart,block,bolt,bookmark,cake,call,cancel,casino,celebration,change_history,check,check_circle,chevron_right,close,contrast,cookie,cooking,credit_card,dark_mode,delete,delivery_dining,directions_run,done_all,download,eco,edit,egg,emoji_events,error,expand_more,fastfood,fitness_center,forum,group,groups,history,home,hourglass_top,icecream,install_mobile,inventory_2,kebab_dining,key,light_mode,link,local_cafe,local_drink,local_fire_department,local_pizza,location_on,lock,logout,lunch_dining,map,menu,more_horiz,my_location,notifications_active,notifications_off,outdoor_grill,package_2,payments,person,point_of_sale,qr_code_2,ramen_dining,receipt,receipt_long,refresh,remove,restaurant,restaurant_menu,rice_bowl,savings,schedule,science,search,share,shopping_bag,smartphone,soup_kitchen,sports_bar,storefront,straighten,table_restaurant,tapas,timer,tune,two_wheeler,visibility,visibility_off,warning,water_bottle,water_drop,whatshot,wifi_off,workspace_premium&display=block" rel="stylesheet">
 <style>:root {
-  --bg: #FFFFFF;
-  --ink: #000000;
+  --bg: #FCF9F5;
+  --ink: #16120E;
   --ink-2: #4A4642;
   --ink-3: #8C857E;
-  --line: #ECE6DF;
-  --soft: #F6F2ED;
-  --beige: #F3E8DA;
-  --beige-2: #FBF6EF;
+  --line: #EAE2D8;
+  --soft: #F3EDE6;
+  --beige: #F1E4D3;
+  --beige-2: #F8F1E8;
   --orange: #FF5A00;
   --orange-2: #E24F00;
   --orange-soft: #FFF0E6;
@@ -1073,6 +1073,11 @@ details.links .muted-t { margin: 8px 0; }
 .ci-note .link { font-size: 12px; }
 :root[data-theme="dark"] .tabbar { box-shadow: 0 14px 34px -12px rgba(0, 0, 0, .8); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tabbar { box-shadow: 0 14px 34px -12px rgba(0, 0, 0, .8); } }
+
+/* переключатель темы в профиле; смена темы — плавная */
+.theme-seg button { font-size: 13px; padding: 0 6px; gap: 5px; }
+.theme-seg .ms { font-size: 18px; }
+html.theme-anim, html.theme-anim * { transition: background-color .3s ease, border-color .3s ease, color .3s ease !important; }
 </style>
 </head>
 <body>
