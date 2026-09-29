@@ -1,0 +1,22 @@
+{
+  "name": "burgerlab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BurgerLab — твой бургер. Твои правила. Конструктор бургеров: Telegram Mini App + бот + веб-версия.",
+  "type": "module",
+  "scripts": {
+    "dev": "node dev.mjs",
+    "build": "node build.mjs",
+    "start": "node server/index.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.4",
+    "esbuild": "0.23.0",
+    "grammy": "^1.46.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
