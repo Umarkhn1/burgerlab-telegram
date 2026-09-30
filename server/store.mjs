@@ -13,8 +13,9 @@ const AUDIT_MAX = 2000;
 // users — клиенты Telegram: номер телефона, которым поделились в боте
 let db = { seq: FIRST_ID - 1, orders: [], users: {} };
 // menu — меню (категории, ингредиенты, допы, party), settings — параметры заведения,
-// stop — стоп-лист { id: true }, staff — сотрудники, audit — журнал изменений настроек
-let conf = { menu: null, settings: null, stop: {}, staff: [], audit: [] };
+// stop — стоп-лист { id: true }, staff — сотрудники с паролем (касса в браузере),
+// tgStaff — сотрудники из Telegram (вход в панель внутри Mini App), audit — журнал изменений настроек
+let conf = { menu: null, settings: null, stop: {}, staff: [], tgStaff: [], audit: [] };
 // Номер ревизии: растёт при любом изменении, по нему касса понимает, что пора обновиться
 let rev = 1;
 let confRev = 1;
@@ -28,6 +29,7 @@ export function loadStore() {
   try { db = readJson(FILE) || db; } catch (e) { console.error('Не удалось прочитать', FILE, e.message); process.exit(1); }
   try { conf = { ...conf, ...(readJson(CONF_FILE) || {}) }; } catch (e) { console.error('Не удалось прочитать', CONF_FILE, e.message); process.exit(1); }
   db.users ||= {};
+  conf.tgStaff ||= [];
   if (!conf.menu) conf.menu = defaultMenu();
   migrateMenu(conf.menu);
   conf.settings = withDefaults(conf.settings);
@@ -171,4 +173,57 @@ export function saveStaff(user, by, action) {
   else conf.staff.push(user);
   audit(by, action, `${user.login} (${user.role})`);
   return saveConf();
+}
+
+// ── Сотрудники из Telegram ──
+// Владельцы (ADMIN_IDS) — всегда администраторы, их нельзя удалить из панели.
+// Остальных администраторов и кассиров добавляют в админ-панели по Telegram ID или @username.
+let owners = [];
+export const setOwners = (ids) => { owners = ids.map(Number); };
+export const getOwners = () => owners;
+export const isOwner = (id) => owners.includes(Number(id));
+export const tgStaffList = () => conf.tgStaff;
+export const getTgStaff = (id) => conf.tgStaff.find((x) => x.tgId === Number(id)) || null;
+
+// Роль пользователя Telegram: 'admin', 'cashier' или null
+export function tgRole(id) {
+  if (!id) return null;
+  if (isOwner(id)) return 'admin';
+  const s = getTgStaff(id);
+  return s && s.active !== false ? s.role : null;
+}
+// Кому слать карточки заказов и оповещения, если нет группы кухни
+export const tgStaffIds = () => [...new Set([...owners, ...conf.tgStaff.filter((x) => x.active !== false).map((x) => x.tgId)])];
+
+export function saveTgStaff(entry, by, action) {
+  const i = conf.tgStaff.findIndex((x) => x.tgId === entry.tgId);
+  if (i >= 0) conf.tgStaff[i] = entry;
+  else conf.tgStaff.push(entry);
+  audit(by, action, `${entry.name}${entry.username ? ` (@${entry.username})` : ''} · ${entry.tgId} · ${entry.role === 'admin' ? 'администратор' : 'кассир'}`);
+  return saveConf();
+}
+
+export function removeTgStaff(tgId, by) {
+  const e = getTgStaff(tgId);
+  if (!e) return null;
+  conf.tgStaff = conf.tgStaff.filter((x) => x.tgId !== e.tgId);
+  audit(by, 'Сотрудник из Telegram удалён', `${e.name}${e.username ? ` (@${e.username})` : ''} · ${e.tgId}`);
+  saveConf();
+  return e;
+}
+
+// Имя и никнейм меняются в Telegram — обновляем тихо, без записи в журнал
+export function touchTgStaff(tgId, patch) {
+  const e = getTgStaff(tgId);
+  if (!e || Object.entries(patch).every(([k, v]) => e[k] === v)) return;
+  Object.assign(e, patch);
+  saveConf();
+}
+
+// Клиент по @username (никнейм сохраняется, когда человек пишет боту или открывает приложение)
+export function findUserByUsername(username) {
+  const u = String(username || '').replace(/^@/, '').toLowerCase();
+  if (!u) return null;
+  for (const [id, x] of Object.entries(db.users)) if ((x.username || '').toLowerCase() === u) return { id: Number(id), ...x };
+  return null;
 }

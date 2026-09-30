@@ -4,6 +4,7 @@ import { hashPassword, checkPassword, signToken, verifyToken, validateInitData }
 import {
   getRev, getConfRev, getConf, activeOrders, listOrders, getOrder, setStop, setMenu, setSettings,
   staffList, getStaff, findStaffByLogin, saveStaff,
+  tgRole, getOwners, isOwner, tgStaffList, getTgStaff, saveTgStaff, removeTgStaff, touchTgStaff, getUser,
 } from './store.mjs';
 import { changeStatus, changeEta } from './orders.mjs';
 import { STATUSES, MODES, DEFAULT_SETTINGS, INGREDIENTS, UPSELL, PARTY } from '../src/data.js';
@@ -32,13 +33,15 @@ export function ensureAdmin() {
   console.log(`✔ Администратор кассы: логин «${login}»${process.env.STAFF_ADMIN_PASSWORD ? ' (пароль из .env)' : `, пароль «${password}» — смените его в админ-панели`}`);
 }
 
-// Администратор из Telegram (ADMIN_IDS): входит в панель внутри Mini App по подписи initData, без пароля
-const tgAdmin = (t) => ({
-  id: `tg:${t.id}`, login: t.username ? `@${t.username}` : `tg${t.id}`, name: [t.first_name, t.last_name].filter(Boolean).join(' ') || 'Администратор',
-  role: 'admin', active: true, tg: true,
+// Сотрудник из Telegram (владелец из ADMIN_IDS или добавленный в панели): входит в панель внутри Mini App
+// по подписи initData, без пароля. Роль — из списка сотрудников.
+const tgStaffUser = (t, role) => ({
+  id: `tg:${t.id}`, tgId: t.id, login: t.username ? `@${t.username}` : `tg${t.id}`, name: [t.first_name, t.last_name].filter(Boolean).join(' ') || 'Сотрудник',
+  role, active: true, tg: true,
 });
+const ROLE_T = { admin: 'администратор', cashier: 'кассир' };
 
-export function createStaffApi({ secret, send, readBody, tooMany, botToken, adminIds = [] }) {
+export function createStaffApi({ secret, send, readBody, tooMany, botToken, resolveTgUser, notifyStaffAdded }) {
   const who = (u) => `${u.name} (${u.login})`;
 
   function auth(req, perm) {
@@ -46,8 +49,12 @@ export function createStaffApi({ secret, send, readBody, tooMany, botToken, admi
     if (initData) {
       const a = validateInitData(initData, botToken);
       if (!a) fail(401, 'Откройте приложение заново');
-      if (!adminIds.includes(a.user.id)) fail(403, 'Раздел доступен только администраторам');
-      return tgAdmin(a.user);
+      const role = tgRole(a.user.id);
+      if (!role) fail(403, 'Раздел доступен только сотрудникам');
+      touchTgStaff(a.user.id, { username: a.user.username || '', name: [a.user.first_name, a.user.last_name].filter(Boolean).join(' ') || getTgStaff(a.user.id)?.name });
+      const u = tgStaffUser(a.user, role);
+      if (perm && !ROLES[u.role]?.perms.includes(perm)) fail(403, 'Недостаточно прав');
+      return u;
     }
     const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const p = verifyToken(token, secret);
@@ -190,6 +197,58 @@ export function createStaffApi({ secret, send, readBody, tooMany, botToken, admi
       const what = [b.password && 'пароль', next.role !== target.role && `роль → ${ROLES[next.role].t}`, next.active !== target.active && (next.active ? 'включён' : 'отключён'), next.name !== target.name && `имя → ${next.name}`].filter(Boolean).join(', ');
       await saveStaff(next, who(u), `Сотрудник изменён: ${what || 'без изменений'}`);
       return { user: publicUser(next) };
+    }],
+
+    // ── Сотрудники из Telegram: добавление по ID или @username, имя и никнейм подтягиваются сами ──
+    ['GET', /^\/api\/staff\/tg$/, async (req) => {
+      auth(req, 'staff');
+      // Имя владельца ещё неизвестно (не открывал приложение после деплоя) — спрашиваем у Telegram
+      for (const id of getOwners()) if (!getUser(id)?.tgName) await resolveTgUser(String(id)).catch(() => {});
+      const owners = getOwners().map((id) => {
+        const u = getUser(id);
+        return { tgId: id, name: u?.tgName || u?.name || `ID ${id}`, username: u?.username || '', role: 'admin', active: true, owner: true };
+      });
+      return { list: [...owners, ...tgStaffList().filter((x) => !isOwner(x.tgId))] };
+    }],
+
+    ['POST', /^\/api\/staff\/tg$/, async (req) => {
+      const u = auth(req, 'staff');
+      const { query, role } = await readBody(req);
+      if (!ROLES[role]) fail(400, 'Выберите роль');
+      if (isOwner(String(query || '').trim())) fail(409, 'Это владелец, он уже администратор');
+      const r = await resolveTgUser(query);
+      if (r.error) fail(404, r.error);
+      const t = r.user;
+      if (isOwner(t.id)) fail(409, `${t.name} — владелец, он уже администратор`);
+      const prev = getTgStaff(t.id);
+      if (prev && prev.active !== false && prev.role === role) fail(409, `${t.name} уже в списке: ${ROLE_T[role]}`);
+      const entry = { tgId: t.id, username: t.username, name: t.name, role, active: true, addedBy: who(u), addedAt: prev?.addedAt || Date.now() };
+      await saveTgStaff(entry, who(u), prev ? 'Сотрудник из Telegram изменён' : 'Добавлен сотрудник из Telegram');
+      const notified = await notifyStaffAdded(entry, u.name);
+      return { entry, notified };
+    }],
+
+    ['PUT', /^\/api\/staff\/tg\/(\d+)$/, async (req, url, m) => {
+      const u = auth(req, 'staff');
+      const e = getTgStaff(m[1]);
+      if (isOwner(m[1])) fail(400, 'Владельца меняют только в настройках сервера (ADMIN_IDS)');
+      if (!e) fail(404, 'Сотрудник не найден');
+      if (u.tgId === e.tgId) fail(400, 'Свою роль и доступ изменить нельзя');
+      const b = await readBody(req);
+      const next = { ...e };
+      if (b.role != null) { if (!ROLES[b.role]) fail(400, 'Неизвестная роль'); next.role = b.role; }
+      if (b.active != null) next.active = !!b.active;
+      const what = [next.role !== e.role && `роль → ${ROLE_T[next.role]}`, next.active !== e.active && (next.active ? 'включён' : 'отключён')].filter(Boolean).join(', ');
+      await saveTgStaff(next, who(u), `Сотрудник из Telegram изменён: ${what || 'без изменений'}`);
+      return { entry: next };
+    }],
+
+    ['DELETE', /^\/api\/staff\/tg\/(\d+)$/, async (req, url, m) => {
+      const u = auth(req, 'staff');
+      if (isOwner(m[1])) fail(400, 'Владельца меняют только в настройках сервера (ADMIN_IDS)');
+      if (u.tgId === Number(m[1])) fail(400, 'Себя удалить нельзя');
+      if (!removeTgStaff(m[1], who(u))) fail(404, 'Сотрудник не найден');
+      return { ok: true };
     }],
 
     ['GET', /^\/api\/staff\/audit$/, async (req) => {

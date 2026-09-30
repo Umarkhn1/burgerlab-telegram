@@ -1065,3 +1065,18 @@ details.links .muted-t { margin: 8px 0; }
 .theme-seg button { font-size: 13px; padding: 0 6px; gap: 5px; }
 .theme-seg .ms { font-size: 18px; }
 html.theme-anim, html.theme-anim * { transition: background-color .3s ease, border-color .3s ease, color .3s ease !important; }
+
+/* сотрудники из Telegram */
+.tg-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tg-add .in-wrap.grow { flex: 1 1 220px; }
+.tg-hint { margin-top: 10px; font-size: 12.5px; }
+.tg-list { padding: 4px 14px; }
+.tg-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.tg-row:last-child { border-bottom: 0; }
+.tg-row.off { opacity: .55; }
+.tg-who { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; }
+.tg-who b { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 14px; }
+.tg-who .pill { font-style: normal; padding: 1px 8px; font-size: 11px; }
+.tg-who small { font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
+.tg-ctl { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.tg-ctl select.in { width: auto; }

@@ -1,6 +1,6 @@
 // Telegram-бот BurgerLab на grammY.
 import { Bot, InlineKeyboard, Keyboard } from 'grammy';
-import { getOrder, ordersOfUser, todayStats, getUser, saveUser } from './store.mjs';
+import { getOrder, ordersOfUser, todayStats, getUser, saveUser, tgRole, tgStaffIds, findUserByUsername } from './store.mjs';
 import { kitchenText, customerText, orderShortLine, changeStatus, esc } from './orders.mjs';
 import { STATUSES, CANCEL_REASONS } from '../src/data.js';
 import { fmtPrice, nextStatus, isClosed, normPhone, fmtPhone, validPhone, zoneFor } from '../src/calc.js';
@@ -18,18 +18,31 @@ async function reverseGeocode({ lat, lng }) {
   } catch { return ''; }
 }
 
-export function createBot({ token, webappUrl, kitchenChatId, adminIds, apiRoot }) {
+export function createBot({ token, webappUrl, kitchenChatId, apiRoot }) {
   const bot = new Bot(token, apiRoot ? { client: { apiRoot } } : undefined);
-  const isStaff = (ctx) => adminIds.includes(ctx.from?.id) || (kitchenChatId && String(ctx.chat?.id) === String(kitchenChatId));
+  // Персонал: владельцы (ADMIN_IDS), сотрудники из админ-панели и участники группы кухни
+  const isStaff = (ctx) => !!tgRole(ctx.from?.id) || (kitchenChatId && String(ctx.chat?.id) === String(kitchenChatId));
   const actor = (ctx) => ({ name: ctx.from.first_name, by: `Telegram: ${ctx.from.first_name}${ctx.from.username ? ` (@${ctx.from.username})` : ''}` });
 
   const appMenuButton = { type: 'web_app', text: '🍔 BurgerLab', web_app: { url: webappUrl } };
-  const isAdmin = (ctx) => adminIds.includes(ctx.from?.id);
-  // Администраторам — вторая кнопка: сразу в раздел «Админ» внутри Mini App
+  const isAdmin = (ctx) => tgRole(ctx.from?.id) === 'admin';
+  // Сотрудникам — вторая кнопка: сразу в панель внутри Mini App
   const openAppKb = (ctx, text = '🍔 Собрать бургер') => {
     const kb = new InlineKeyboard().webApp(text, webappUrl);
-    return ctx && isAdmin(ctx) ? kb.row().webApp('🛠 Админ-панель', `${webappUrl}?panel=1`) : kb;
+    const role = ctx && tgRole(ctx.from?.id);
+    return role ? kb.row().webApp(role === 'admin' ? '🛠 Админ-панель' : '🧾 Касса', `${webappUrl}?panel=1`) : kb;
   };
+
+  // Запоминаем никнейм и имя каждого, кто пишет боту: по @username сотрудника можно найти в админ-панели
+  bot.use(async (ctx, next) => {
+    const f = ctx.from;
+    if (f && !f.is_bot && ctx.chat?.type === 'private') {
+      const u = getUser(f.id);
+      const tgName = [f.first_name, f.last_name].filter(Boolean).join(' ');
+      if (!u || u.username !== (f.username || '') || u.tgName !== tgName) saveUser(f.id, { username: f.username || '', tgName });
+    }
+    return next();
+  });
 
   // ── Клиент ──
   // /start обязательно просит номер, затем геолокацию. Только после этого — кнопка Mini App.
@@ -181,7 +194,7 @@ export function createBot({ token, webappUrl, kitchenChatId, adminIds, apiRoot }
     return kb;
   }
 
-  const staffTargets = () => (kitchenChatId ? [kitchenChatId] : adminIds);
+  const staffTargets = () => (kitchenChatId ? [kitchenChatId] : tgStaffIds());
 
   async function sendToKitchen(o) {
     const targets = staffTargets();
@@ -213,7 +226,7 @@ export function createBot({ token, webappUrl, kitchenChatId, adminIds, apiRoot }
 
   // Оповещение персонала: группа кухни и администраторы
   async function alertStaff(text) {
-    const targets = [...new Set([...(kitchenChatId ? [kitchenChatId] : []), ...adminIds].map(String))];
+    const targets = [...new Set([...(kitchenChatId ? [kitchenChatId] : []), ...tgStaffIds()].map(String))];
     for (const chatId of targets) {
       try { await bot.api.sendMessage(chatId, text, { parse_mode: 'HTML' }); }
       catch (e) { console.error(`Не удалось отправить оповещение в ${chatId}:`, e.message); }
@@ -235,5 +248,40 @@ export function createBot({ token, webappUrl, kitchenChatId, adminIds, apiRoot }
     return me;
   }
 
-  return { bot, setup, sendToKitchen, refreshKitchenCard, notifyCustomer, alertStaff };
+  // Найти пользователя Telegram по ID, @username или ссылке t.me/username.
+  // По ID Telegram отдаёт имя и никнейм, если человек хоть раз писал боту.
+  // Никнейм Telegram по username для обычных пользователей не ищет — ищем среди тех, кто писал боту.
+  async function resolveTgUser(query) {
+    const q = String(query || '').trim().replace(/^(https?:\/\/)?(t\.me|telegram\.me)\//i, '').replace(/^@/, '');
+    let id = /^\d{5,15}$/.test(q) ? Number(q) : null;
+    if (!id) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/.test(q)) return { error: 'Введите Telegram ID (только цифры) или @username' };
+      id = findUserByUsername(q)?.id;
+      if (!id) return { error: `@${q} ещё не писал боту. Попросите нажать /start в боте или укажите Telegram ID` };
+    }
+    try {
+      const c = await bot.api.getChat(id);
+      if (c.type !== 'private') return { error: 'Это не пользователь, а группа или канал' };
+      const user = { id: c.id, username: c.username || '', name: [c.first_name, c.last_name].filter(Boolean).join(' ') || `ID ${c.id}` };
+      saveUser(c.id, { username: user.username, tgName: user.name });
+      return { user };
+    } catch {
+      const u = getUser(id);
+      if (u?.tgName || u?.username) return { user: { id, username: u.username || '', name: u.tgName || u.name || `ID ${id}` } };
+      return { error: 'Пользователь не найден. Он должен сначала нажать /start в боте — тогда подтянутся имя и никнейм' };
+    }
+  }
+
+  // Сообщение новому сотруднику: кнопка сразу открывает панель в Mini App
+  async function notifyStaffAdded(entry, byName) {
+    const role = entry.role === 'admin' ? 'администратором' : 'кассиром';
+    try {
+      await bot.api.sendMessage(entry.tgId, `👋 ${esc(byName)} добавил(а) вас ${role} BurgerLab.\n\nПанель открывается прямо в приложении — вкладка «${entry.role === 'admin' ? 'Админ' : 'Касса'}». Сюда же будут приходить новые заказы и оповещения.`, {
+        parse_mode: 'HTML', reply_markup: new InlineKeyboard().webApp(entry.role === 'admin' ? '🛠 Открыть админ-панель' : '🧾 Открыть кассу', `${webappUrl}?panel=1`),
+      });
+      return true;
+    } catch { return false; }
+  }
+
+  return { bot, setup, sendToKitchen, refreshKitchenCard, notifyCustomer, alertStaff, resolveTgUser, notifyStaffAdded };
 }

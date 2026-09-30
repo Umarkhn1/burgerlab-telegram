@@ -9,7 +9,7 @@ export const ICON_NAMES = [
   'visibility', 'visibility_off', 'lock', 'account_circle', 'light_mode', 'dark_mode', 'contrast', 'notifications_active', 'notifications_off',
   'warning', 'error', 'schedule', 'timer', 'hourglass_top', 'wifi_off', 'call', 'smartphone', 'location_on', 'my_location', 'map',
   'forum', 'payments', 'credit_card', 'install_mobile', 'qr_code_2', 'key', 'tune', 'history', 'group', 'receipt_long', 'point_of_sale',
-  'restaurant_menu', 'block', 'delivery_dining', 'admin_panel_settings', 'directions_run', 'table_restaurant', 'inventory_2', 'storefront', 'add_circle',
+  'restaurant_menu', 'block', 'delivery_dining', 'admin_panel_settings', 'person_add', 'alternate_email', 'send', 'directions_run', 'table_restaurant', 'inventory_2', 'storefront', 'add_circle',
   // конструктор и главная
   'casino', 'science', 'straighten', 'bolt', 'local_fire_department', 'workspace_premium', 'fitness_center', 'savings', 'whatshot',
   // категории и позиции меню

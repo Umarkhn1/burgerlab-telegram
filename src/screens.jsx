@@ -365,7 +365,9 @@ export function Profile() {
         {!inTelegram && <button onClick={() => A.go('kitchen')}><span><Icon name="soup_kitchen" /> Экран кухни</span><small>демо</small></button>}
         {!inTelegram && <button onClick={() => A.go('admin')}><span><Icon name="bar_chart" /> Админ-панель</span><small>демо</small></button>}
         {!inTelegram && <button onClick={A.installHint}><span><Icon name="install_mobile" /> Установить на телефон</span><small>PWA</small></button>}
-        {inTelegram && S.profile.admin && <button onClick={() => A.go('panel')}><span><Icon name="admin_panel_settings" /> Админ-панель</span><small>касса, меню, отчёты</small></button>}
+        {inTelegram && S.profile.admin && (S.profile.staffRole === 'cashier'
+          ? <button onClick={() => A.go('panel')}><span><Icon name="point_of_sale" /> Касса</span><small>заказы, стоп-лист</small></button>
+          : <button onClick={() => A.go('panel')}><span><Icon name="admin_panel_settings" /> Админ-панель</span><small>касса, меню, отчёты</small></button>)}
         <button className="danger" onClick={A.resetDemo}><span><Icon name="refresh" /> {inTelegram ? 'Очистить данные на устройстве' : 'Сбросить демо-данные'}</span><small>{inTelegram ? 'корзина, рецепты, бейджи' : 'корзина, рецепты, заказы'}</small></button>
       </div>
     </div>

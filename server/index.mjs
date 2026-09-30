@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { validateInitData } from './auth.mjs';
-import { loadStore, createOrder, getOrder, findByIdem, updateOrder, activeOrders, getConf, getConfRev, flush, getUser, ordersOfUser } from './store.mjs';
+import { loadStore, createOrder, getOrder, findByIdem, updateOrder, activeOrders, getConf, getConfRev, flush, getUser, saveUser, ordersOfUser, setOwners, tgRole } from './store.mjs';
 import { buildOrder, publicOrder, onOrderEvent, OrderError } from './orders.mjs';
 import { createStaffApi, ensureAdmin } from './staff.mjs';
 import { webhookCallback } from 'grammy';
@@ -33,8 +33,9 @@ const webappUrl = WEBAPP_URL.replace(/\/+$/, '') + '/';
 const staffSecret = process.env.STAFF_SECRET || crypto.createHash('sha256').update(`burgerlab-staff:${BOT_TOKEN}`).digest('hex');
 
 loadStore();
+setOwners(adminIds);
 ensureAdmin();
-const { bot, setup, sendToKitchen, refreshKitchenCard, notifyCustomer, alertStaff } = createBot({ token: BOT_TOKEN, webappUrl, kitchenChatId: KITCHEN_CHAT_ID, adminIds, apiRoot: process.env.TELEGRAM_API_ROOT });
+const { bot, setup, sendToKitchen, refreshKitchenCard, notifyCustomer, alertStaff, resolveTgUser, notifyStaffAdded } = createBot({ token: BOT_TOKEN, webappUrl, kitchenChatId: KITCHEN_CHAT_ID, apiRoot: process.env.TELEGRAM_API_ROOT });
 const me = await setup();
 console.log(`✔ Бот @${me.username} подключён`);
 if (!KITCHEN_CHAT_ID && !adminIds.length) console.warn('⚠ Не заданы KITCHEN_CHAT_ID и ADMIN_IDS: заказы увидит только веб-касса, оповещения о задержках в Telegram не придут');
@@ -77,7 +78,7 @@ const readBody = (req) => new Promise((resolve, reject) => {
   req.on('error', reject);
 });
 
-const staffApi = createStaffApi({ secret: staffSecret, send, readBody, tooMany, botToken: BOT_TOKEN, adminIds });
+const staffApi = createStaffApi({ secret: staffSecret, send, readBody, tooMany, botToken: BOT_TOKEN, resolveTgUser, notifyStaffAdded });
 
 // Публичная часть настроек: меню, стоп-лист и параметры, нужные приложению
 const publicConfig = () => {
@@ -148,8 +149,12 @@ const server = http.createServer(async (req, res) => {
 
       // Данные клиента из бота: номер телефона и геолокация, которыми он поделился
       if (req.method === 'GET' && url.pathname === '/api/me') {
-        const u = getUser(user.id);
-        return send(res, 200, { phone: u?.phone || '', name: u?.name || '', location: u?.location || null, address: u?.address || '', admin: adminIds.includes(user.id) });
+        let u = getUser(user.id);
+        // Запоминаем никнейм: по нему сотрудника можно добавить в админ-панели
+        const tgName = [user.first_name, user.last_name].filter(Boolean).join(' ');
+        if (!u || u.username !== (user.username || '') || u.tgName !== tgName) u = saveUser(user.id, { username: user.username || '', tgName });
+        const role = tgRole(user.id);
+        return send(res, 200, { phone: u?.phone || '', name: u?.name || '', location: u?.location || null, address: u?.address || '', admin: !!role, role });
       }
 
       // Последние заказы клиента — чтобы история была на любом устройстве, а не только там, где оформляли

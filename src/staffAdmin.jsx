@@ -533,6 +533,70 @@ export function Delivery({ api, toast, reloadConfig, cfgRev }) {
   );
 }
 
+// ── Сотрудники из Telegram: добавление по ID или @username, имя и никнейм подтягиваются сами ──
+const ROLE_OPTS = [['admin', 'Администратор'], ['cashier', 'Кассир']];
+
+function TgStaff({ api, toast, user }) {
+  const [list, setList] = useState([]);
+  const [q, setQ] = useState('');
+  const [role, setRole] = useState('admin');
+  const [busy, setBusy] = useState(false);
+  const load = () => api('/staff/tg').then((d) => setList(d.list)).catch((e) => toast(e.message, 'err'));
+  useEffect(() => { load(); }, []);
+  const add = async () => {
+    setBusy(true);
+    try {
+      const { entry, notified } = await api('/staff/tg', { method: 'POST', body: { query: q, role } });
+      toast(`${entry.name}${entry.username ? ` (@${entry.username})` : ''} добавлен${notified ? ' — ему пришло сообщение от бота' : ''}`, 'ok');
+      setQ(''); load();
+    } catch (e) { toast(e.message, 'err'); }
+    setBusy(false);
+  };
+  const upd = async (x, body, msg) => {
+    try { await api(`/staff/tg/${x.tgId}`, { method: 'PUT', body }); toast(msg, 'ok'); load(); }
+    catch (e) { toast(e.message, 'err'); }
+  };
+  const del = async (x) => {
+    if (!window.confirm(`Убрать ${x.name} из сотрудников?`)) return;
+    try { await api(`/staff/tg/${x.tgId}`, { method: 'DELETE' }); toast('Сотрудник удалён', 'ok'); load(); }
+    catch (e) { toast(e.message, 'err'); }
+  };
+  return (
+    <>
+      <Card icon="send" title="Сотрудники из Telegram" sub="Входят в панель прямо в приложении, без пароля. Им же приходят новые заказы и оповещения о задержках.">
+        <div className="tg-add">
+          <div className="in-wrap grow"><Icon name="alternate_email" /><input className="in" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Telegram ID или @username" autoComplete="off" autoCapitalize="off" onKeyDown={(e) => e.key === 'Enter' && q.trim() && add()} /></div>
+          <Seg value={role} onChange={setRole} options={ROLE_OPTS} />
+          <button className="btn primary sm" onClick={add} disabled={busy || !q.trim()}><Icon name="person_add" />{busy ? 'Ищем…' : 'Добавить'}</button>
+        </div>
+        <p className="muted-t tg-hint">Имя и никнейм подтянутся сами. Человек должен хоть раз нажать /start в боте. Свой ID можно узнать командой /chatid.</p>
+      </Card>
+      <div className="card tg-list mt">
+        {list.map((x) => {
+          const me = user.tgId === x.tgId;
+          const locked = x.owner || me;
+          return (
+            <div key={x.tgId} className={`tg-row ${x.active ? '' : 'off'}`}>
+              <span className="st-ava sm">{(x.name || '?')[0].toUpperCase()}</span>
+              <span className="tg-who">
+                <b>{x.name}{x.owner && <em className="pill">владелец</em>}{me && <em className="pill">вы</em>}</b>
+                <small>{x.username ? `@${x.username} · ` : ''}ID {x.tgId}</small>
+              </span>
+              <span className="tg-ctl">
+                {locked ? <span className="muted-t">{x.role === 'admin' ? 'Администратор' : 'Кассир'}</span>
+                  : <select className="in sm" value={x.role} onChange={(e) => upd(x, { role: e.target.value }, 'Роль изменена')}>{ROLE_OPTS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select>}
+                {!locked && <Switch on={x.active} onChange={(v) => upd(x, { active: v }, v ? 'Доступ включён' : 'Доступ отключён')} label="Доступ" />}
+                {!locked && <button className="icon-btn sm" onClick={() => del(x)} aria-label="Удалить" title="Удалить"><Icon name="delete" /></button>}
+              </span>
+            </div>
+          );
+        })}
+        {!list.length && <p className="muted-t">Пока никого</p>}
+      </div>
+    </>
+  );
+}
+
 // ── Сотрудники ──
 export function Staff({ api, toast, user }) {
   const [list, setList] = useState([]);
@@ -556,6 +620,8 @@ export function Staff({ api, toast, user }) {
   return (
     <>
       <PageHead title="Сотрудники" sub="Кассир: заказы, статусы, история, стоп-лист. Администратор: всё, включая меню, настройки и отчёты" />
+      <TgStaff api={api} toast={toast} user={user} />
+      <h4 className="st-h4 mt">Вход по логину и паролю (касса в браузере, /staff)</h4>
       <div className="card tbl-card">
         <table className="tbl">
           <thead><tr><th>Сотрудник</th><th>Роль</th><th>Активен</th><th /></tr></thead>

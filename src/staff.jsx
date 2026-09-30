@@ -25,6 +25,7 @@ const SECTIONS = [
   { id: 'audit', t: 'Журнал', icon: 'history', perm: 'audit', group: 'Управление' },
 ];
 const ROLE_NAMES = { admin: 'Администратор', cashier: 'Кассир' };
+export const PANEL_T = { admin: 'Админ', cashier: 'Касса' };
 
 async function request(path, { method = 'GET', body, token, initData } = {}) {
   let res;
@@ -577,7 +578,7 @@ export function StaffApp({ embedded = false, initData = '' }) {
       <div className="st st-app embedded">
         <div className="st-gate">
           <Icon name={denied ? 'lock' : 'hourglass_top'} />
-          <b>{denied ? 'Нет доступа' : 'Открываем админ-панель…'}</b>
+          <b>{denied ? 'Нет доступа' : 'Открываем панель…'}</b>
           {denied && <span className="muted-t">{denied}</span>}
         </div>
       </div>

@@ -10,7 +10,7 @@ import Builder, { TypeBadge } from './builder.jsx';
 import { Home, Community, Challenges, MyBurgers, Party, Profile } from './screens.jsx';
 import { Cart, Checkout, Tracking } from './commerce.jsx';
 import { Kitchen, Admin } from './ops.jsx';
-import { StaffApp } from './staff.jsx';
+import { StaffApp, PANEL_T } from './staff.jsx';
 
 // ---------- Хранилище (localStorage; позже — REST API) ----------
 const KEY = 'burgerlab:v1';
@@ -375,13 +375,14 @@ function App() {
   // Номер и геолокация, которыми клиент поделился в боте, — подставляем в заказ
   useEffect(() => {
     if (!inTelegram) return;
-    const pull = () => apiMe().then(({ phone, location, address, admin }) => {
+    const pull = () => apiMe().then(({ phone, location, address, admin, role }) => {
       setS((s) => {
         const p = { ...s.profile };
         if (phone && p.phone !== phone) Object.assign(p, { phone, phoneFromBot: true });
         if (location && (p.botLocation?.lat !== location.lat || p.botLocation?.lng !== location.lng || p.botAddress !== address)) Object.assign(p, { botLocation: location, botAddress: address || '' });
         p.admin = !!admin;
-        return p.phone === s.profile.phone && p.botLocation === s.profile.botLocation && p.botAddress === s.profile.botAddress && p.admin === !!s.profile.admin ? s : { ...s, profile: p };
+        p.staffRole = role || null;
+        return p.phone === s.profile.phone && p.botLocation === s.profile.botLocation && p.botAddress === s.profile.botAddress && p.admin === !!s.profile.admin && p.staffRole === (s.profile.staffRole || null) ? s : { ...s, profile: p };
       });
       if (admin && wantPanel.current) { wantPanel.current = false; hist.current = []; setRoute({ name: 'panel', params: {} }); }
     }).catch(() => {});
@@ -719,7 +720,9 @@ function App() {
 
   const cartCount = S.cart.reduce((s, i) => s + i.qty, 0);
   const tab = TAB_OF[route.name] || route.name;
-  const navMobile = isAdmin ? [...NAV_MOBILE, NAV_ADMIN] : NAV_MOBILE;
+  // Кассиру вкладка называется «Касса», администратору — «Админ»
+  const navPanel = [NAV_ADMIN[0], PANEL_T[S.profile.staffRole] || NAV_ADMIN[1], S.profile.staffRole === 'cashier' ? 'point_of_sale' : NAV_ADMIN[2]];
+  const navMobile = isAdmin ? [...NAV_MOBILE, navPanel] : NAV_MOBILE;
   const tabIdx = navMobile.findIndex(([id]) => id === tab);
   const currentSt = useMemo(() => stats(S.layers), [S.layers]);
 
@@ -749,7 +752,7 @@ function App() {
           <nav className="sidebar" aria-label="Навигация">
             <button className="side-logo" onClick={() => go('home')} aria-label="BurgerLab, главная"><Logo /></button>
             <div className="side-links">
-              {(isAdmin ? [...NAV_DESK, NAV_ADMIN] : NAV_DESK).map(([id, t, d]) => (
+              {(isAdmin ? [...NAV_DESK, navPanel] : NAV_DESK).map(([id, t, d]) => (
                 <button key={id} className={`side-link ${route.name === id ? 'on' : ''}`} onClick={() => go(id)} title={t}>
                   <Icon name={d} fill={route.name === id} /><span className="sl-t">{t}</span>{id === 'cart' && cartCount > 0 && <span className="count">{cartCount}</span>}
                 </button>
