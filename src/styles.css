@@ -1080,3 +1080,25 @@ html.theme-anim, html.theme-anim * { transition: background-color .3s ease, bord
 .tg-who small { font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
 .tg-ctl { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .tg-ctl select.in { width: auto; }
+
+/* ---------- Карта: точка доставки и ресторан, зоны доставки ---------- */
+.map-box { position: relative; border-radius: 18px; overflow: hidden; border: 1.5px solid var(--line); background: var(--soft); isolation: isolate; }
+.map-canvas { position: absolute; inset: 0; }
+.map-state { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-3); font-size: 13px; font-weight: 600; text-align: center; padding: 16px; }
+.map-fit { position: absolute; right: 10px; bottom: 22px; z-index: 500; height: 32px; padding: 0 12px; border-radius: 999px; background: #fff; color: #16120E; font-size: 12.5px; font-weight: 700; box-shadow: 0 4px 14px -6px rgba(0, 0, 0, .4); }
+.map-pin { display: block; width: 30px; height: 30px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: var(--orange); border: 3px solid #fff; box-shadow: 0 6px 14px -4px rgba(0, 0, 0, .5); }
+.map-pin::after { content: ''; position: absolute; inset: 7px; border-radius: 50%; background: #fff; }
+.map-pin.shop { background: #16120E; }
+.map-sheet { display: flex; flex-direction: column; gap: 10px; }
+.map-sheet .hint { margin: 0; }
+.leaflet-container { font: inherit; background: var(--soft); }
+.zone-card.idle { background: var(--soft); color: var(--ink-2); }
+.zone-card.idle b .ms { color: var(--orange); }
+.zone-rows { display: flex; flex-direction: column; gap: 6px; }
+.zone-head, .zone-row { display: grid; grid-template-columns: 52px 64px minmax(0, 1fr) 64px 28px; gap: 6px; align-items: center; }
+.zone-head { font-size: 11.5px; font-weight: 700; color: var(--ink-3); padding: 0 2px; }
+.zone-head span:first-child { grid-column: span 2; }
+.zone-head span:nth-child(2) { display: none; }
+.zone-row .in { width: 100%; }
+.zone-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; flex: none; }
+.zone-from { display: inline-flex; align-items: center; justify-content: flex-end; font-weight: 700; font-size: 13.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }

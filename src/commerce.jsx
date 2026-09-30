@@ -6,7 +6,8 @@ import {
   leadMinutes, flowOf, statusInfo, isClosed,
 } from './calc.js';
 import { inTelegram, requestPhone, getLocation } from './telegram.js';
-import { MiniBurger, Empty, ScreenHead, Stepper, Icon } from './ui.jsx';
+import { MiniBurger, Empty, ScreenHead, Stepper, Icon, Sheet } from './ui.jsx';
+import { MapPicker, reverseGeocode } from './map.jsx';
 import { PartyBurgerArt } from './visuals.jsx';
 
 export { cartTotals } from './calc.js';
@@ -135,46 +136,66 @@ function WhenField({ f, setF, lead }) {
   );
 }
 
+// Доставка по расстоянию: сколько км от ресторана, цена и время в пути
 function ZoneCard({ zone, km, t }) {
-  if (!zone) return <div className="zone-card bad"><b><Icon name="cancel" /> Адрес вне зоны доставки{km != null ? ` (${String(km).replace('.', ',')} км)` : ''}</b><span>Выбери самовывоз или другой адрес</span></div>;
+  const dist = km != null ? `${String(km).replace('.', ',')} км от ресторана` : '';
+  if (!zone) return <div className="zone-card bad"><b><Icon name="cancel" /> Сюда не доставляем{dist ? ` · ${dist}` : ''}</b><span>Выбери другую точку или самовывоз</span></div>;
   return (
     <div className="zone-card">
-      <b><Icon name="check_circle" /> {zone.name}{km != null ? ` · ${String(km).replace('.', ',')} км от ресторана` : ''}</b>
-      <span>Доставка {t.fee ? fmtPrice(t.fee) : 'бесплатно'} · в пути ≈ {zone.etaMin} мин</span>
+      <b><Icon name="check_circle" /> Доставка {t.fee ? fmtPrice(t.fee) : 'бесплатно'}</b>
+      <span>{dist}{dist ? " · " : ""}в пути ≈ {zone.etaMin} мин</span>
     </div>
   );
 }
 
-function DeliverySection({ f, setF, err, t }) {
+const withZone = (location) => (location ? { location, km: zoneFor(location).km } : { location: null, km: null });
+const zoneOf = (location) => (location ? zoneFor(location).zone : null);
+// Цены доставки для подсказки: «до 3 км — 10 000 сум · 3–7 км — 15 000 сум»
+const priceList = () => SETTINGS.delivery.zones.map((z) => `${z.name} — ${fmtPrice(z.fee)}`).join(' · ');
+
+function DeliverySection({ f, setF, err, t, zone }) {
   const { S } = useApp();
   const [locating, setLocating] = useState(false);
   const [locErr, setLocErr] = useState('');
+  const [mapOpen, setMapOpen] = useState(false);
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
+  // Новая точка: пересчитываем км и подставляем адрес (улицу можно поправить вручную)
+  const setPoint = async (p) => {
+    setF((x) => ({ ...x, ...withZone(p) }));
+    const a = await reverseGeocode(p);
+    if (a) setF((x) => (x.location === p ? { ...x, address: a } : x));
+  };
   const detect = async () => {
     setLocating(true); setLocErr('');
-    try {
-      const p = await getLocation();
-      const z = zoneFor(p);
-      setF((x) => ({ ...x, location: p, zoneId: z.zone?.id || null, km: z.km }));
-    } catch (e) { setLocErr(e.message); }
+    try { await setPoint(await getLocation()); } catch (e) { setLocErr(e.message); }
     setLocating(false);
   };
-  const zone = SETTINGS.delivery.zones.find((z) => z.id === f.zoneId) || null;
+  const saved = S.addresses.filter((a) => a.location);
   return (
     <section className="co-section">
       <h2 className="sec-title"><Icon name="delivery_dining" /> Доставка</h2>
-      {S.addresses.length > 0 && (
+      {saved.length > 0 && (
         <div className="chips wrap saved-addr">
-          {S.addresses.map((a) => (
+          {saved.map((a) => (
             <button key={a.address} type="button" className={`chip ${f.address === a.address ? 'active' : ''}`}
-              onClick={() => setF((x) => ({ ...x, address: a.address, details: a.details, location: a.location, zoneId: a.location ? zoneFor(a.location).zone?.id || null : a.zoneId, km: a.location ? zoneFor(a.location).km : null }))}>
+              onClick={() => setF((x) => ({ ...x, address: a.address, details: a.details, ...withZone(a.location) }))}>
               <Icon name="location_on" /> {a.address}
             </button>
           ))}
         </div>
       )}
+      <div className={`field ${err.zone ? 'bad' : ''}`}>
+        <span>Куда доставить{f.location && f.location === S.profile.botLocation && <small className="from-bot"><Icon name="check_circle" /> из Telegram</small>}</span>
+        {f.location ? <ZoneCard zone={zone} km={f.km} t={t} /> : <div className="zone-card idle"><b><Icon name="pin_drop" /> Укажи точку — посчитаем доставку по расстоянию</b><span>{priceList()}</span></div>}
+        <div className="row2">
+          <button type="button" className="btn outline" onClick={detect} disabled={locating}><Icon name="my_location" /> {locating ? 'Ищем…' : 'Я здесь'}</button>
+          <button type="button" className="btn outline" onClick={() => setMapOpen(true)}><Icon name="map" /> На карте</button>
+        </div>
+        {locErr && <em>{locErr}. Укажи точку на карте</em>}
+        {err.zone && <em>{err.zone}</em>}
+      </div>
       <label className={`field ${err.address ? 'bad' : ''}`}>
-        <span>Адрес доставки{f.location && f.location === S.profile.botLocation && <small className="from-bot"><Icon name="check_circle" /> из Telegram</small>}</span>
+        <span>Улица и дом</span>
         <input value={f.address} onChange={set('address')} autoComplete="street-address" placeholder="Ташкент, ул. Амира Темура, 15" />
         {err.address && <em>{err.address}</em>}
       </label>
@@ -182,28 +203,20 @@ function DeliverySection({ f, setF, err, t }) {
         <span>Подъезд, этаж, квартира</span>
         <input value={f.details} onChange={set('details')} placeholder="Подъезд 2, этаж 5, кв. 18" />
       </label>
-      <div className={`field ${err.zone ? 'bad' : ''}`}>
-        <span>Зона доставки</span>
-        <button type="button" className="btn outline block" onClick={detect} disabled={locating}><Icon name="my_location" /> {locating ? 'Определяем…' : f.location ? 'Обновить геолокацию' : 'Определить по геолокации'}</button>
-        {locErr && <em>{locErr}. Выбери зону вручную</em>}
-        {f.location && <ZoneCard zone={zone} km={f.km} t={t} />}
-        <div className="zone-list" role="radiogroup" aria-label="Зоны доставки">
-          {SETTINGS.delivery.zones.map((z) => (
-            <button key={z.id} type="button" role="radio" aria-checked={f.zoneId === z.id} className={`zone-opt ${f.zoneId === z.id ? 'on' : ''}`}
-              onClick={() => setF((x) => ({ ...x, zoneId: z.id, location: null, km: null }))}>
-              <b>{z.name}</b><span>{t.sub >= SETTINGS.freeFrom ? 'бесплатно' : fmtPrice(z.fee)} · ≈ {leadMinutes('delivery', z)} мин</span>
-            </button>
-          ))}
-        </div>
-        {err.zone && <em>{err.zone}</em>}
-      </div>
       <WhenField f={f} setF={setF} lead={leadMinutes('delivery', zone || SETTINGS.delivery.zones[0])} />
+      <Sheet open={mapOpen} onClose={() => setMapOpen(false)} title="Куда доставить?">
+        <div className="map-sheet">
+          <MapPicker value={f.location} onChange={setPoint} origin={SETTINGS.delivery.origin} zones={SETTINGS.delivery.zones} height={Math.min(380, Math.round(window.innerHeight * 0.45))} />
+          <p className="hint">Нажми на карту или перетащи метку. Цветные круги — зоны доставки.</p>
+          {f.location ? <ZoneCard zone={zone} km={f.km} t={t} /> : <div className="zone-card idle"><b>Точка не выбрана</b><span>{priceList()}</span></div>}
+          <button type="button" className="btn primary block lg" onClick={() => setMapOpen(false)} disabled={!f.location}>Готово</button>
+        </div>
+      </Sheet>
     </section>
   );
 }
 
-const withZone = (location, zoneId = null) => (location ? { location, zoneId: zoneFor(location).zone?.id || null, km: zoneFor(location).km } : { location: null, zoneId, km: null });
-const savedAddr = (a) => ({ address: a?.address || '', details: a?.details || '', ...withZone(a?.location, a?.zoneId) });
+const savedAddr = (a) => ({ address: a?.location ? a.address : '', details: a?.location ? a.details || '' : '', ...withZone(a?.location) });
 const botAddr = (p) => ({ address: p.botAddress || '', details: '', ...withZone(p.botLocation) });
 
 export function Checkout() {
@@ -219,7 +232,7 @@ export function Checkout() {
   }));
   const [err, setErr] = useState({});
   const [sending, setSending] = useState(false);
-  const zone = f.mode === 'delivery' ? SETTINGS.delivery.zones.find((z) => z.id === f.zoneId) || null : null;
+  const zone = f.mode === 'delivery' ? zoneOf(f.location) : null;
   const t = cartTotals(S.cart, f.mode, zone);
   const bad = S.cart.some((i) => itemIssues(i).length);
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
@@ -247,7 +260,7 @@ export function Checkout() {
     if (f.mode !== 'hall' && !validPhone(f.phone)) e.phone = 'Нужен номер в формате +998 90 123 45 67';
     if (f.mode === 'hall' && f.phone.replace(/\D/g, '').length > 3 && !validPhone(f.phone)) e.phone = 'Проверь номер или оставь поле пустым';
     if (f.mode === 'delivery' && f.address.trim().length < 5) e.address = 'Укажи улицу и дом';
-    if (f.mode === 'delivery' && !zone) e.zone = f.location ? 'Этот адрес вне зоны доставки' : 'Определи зону по геолокации или выбери её';
+    if (f.mode === 'delivery' && !zone) e.zone = f.location ? 'Сюда не доставляем — выбери другую точку или самовывоз' : 'Укажи точку доставки: «Я здесь» или «На карте»';
     if (f.mode === 'hall' && !(Number(f.table) >= 1 && Number(f.table) <= SETTINGS.hallTables)) e.table = 'Выбери номер стола';
     setErr(e);
     if (Object.keys(e).length) return;
@@ -293,7 +306,7 @@ export function Checkout() {
             {err.phone && <em>{err.phone}</em>}
           </label>
 
-          {f.mode === 'delivery' && <DeliverySection f={f} setF={setF} err={err} t={t} />}
+          {f.mode === 'delivery' && <DeliverySection f={f} setF={setF} err={err} t={t} zone={zone} />}
 
           {f.mode === 'pickup' && (
             <section className="co-section">
@@ -333,8 +346,8 @@ export function Checkout() {
               <div key={i.cid} className="sum-line"><span>{i.name}{i.qty > 1 ? ` × ${i.qty}` : ''}</span><b>{fmtPrice(i.unit * i.qty)}</b></div>
             ))}
             <div className="sum-line"><span>Товары</span><b>{fmtPrice(t.sub)}</b></div>
-            {f.mode === 'delivery' && <div className="sum-line"><span>Доставка</span><b>{zone ? (t.fee ? fmtPrice(t.fee) : 'бесплатно') : t.feeFrom ? `от ${fmtPrice(t.feeFrom)}` : 'бесплатно'}</b></div>}
-            <div className="sum-line total"><span>Итого</span><b>{fmtPrice(t.total)}</b></div>
+            {f.mode === 'delivery' && <div className="sum-line"><span>Доставка{zone && f.km != null ? ` · ${String(f.km).replace('.', ',')} км` : ''}</span><b>{zone ? (t.fee ? fmtPrice(t.fee) : 'бесплатно') : t.feeFrom ? `≈ от ${fmtPrice(t.feeFrom)}` : 'бесплатно'}</b></div>}
+            <div className="sum-line total"><span>Итого</span><b>{f.mode === 'delivery' && !zone && t.feeFrom ? `≈ ${fmtPrice(t.total + t.feeFrom)}` : fmtPrice(t.total)}</b></div>
             <div className="sum-line"><span>{f.mode === 'delivery' ? 'Доставим' : 'Будет готов'}</span><b>≈ к {fmtTime(etaAt)}</b></div>
             <MinOrderNote t={t} />
             {bad && <div className="min-note">Часть позиций закончилась — вернись в корзину</div>}

@@ -4,6 +4,8 @@ import { CATEGORIES, INGREDIENTS, UPSELL, PARTY, STOP, SETTINGS, STATUSES, MODES
 import { fmtPrice, fmtDateTime, statusInfo } from './calc.js';
 import { Icon } from './ui.jsx';
 import { MENU_ICONS } from './icons.js';
+import { MapPicker, reverseGeocode, zoneColor } from './map.jsx';
+import { getLocation } from './telegram.js';
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const CONFIG = (typeof window !== 'undefined' && window.BL_CONFIG) || {};
@@ -490,43 +492,52 @@ export function Settings({ api, toast, reloadConfig, cfgRev }) {
 export function Delivery({ api, toast, reloadConfig, cfgRev }) {
   const { d, set, actions } = useSettingsDraft(cfgRev, api, toast, reloadConfig);
   const zones = d.delivery.zones;
+  const origin = d.delivery.origin;
+  const [locating, setLocating] = useState(false);
+  const [addr, setAddr] = useState('');
+  useEffect(() => { let off = false; setAddr(''); reverseGeocode(origin).then((a) => !off && setAddr(a)); return () => { off = true; }; }, [origin.lat, origin.lng]);
+  const setOrigin = (p) => set('delivery.origin', p);
+  // Зоны идут по возрастанию: «от» — это «до» предыдущей зоны
   const setZone = (i, patch) => set('delivery.zones', zones.map((z, j) => (j === i ? { ...z, ...patch } : z)));
-  const here = () => navigator.geolocation?.getCurrentPosition(
-    (p) => { set('delivery.origin', { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6) }); toast('Координаты обновлены — не забудьте сохранить'); },
-    () => toast('Не удалось получить геолокацию', 'err'),
-  );
+  const sortZones = () => set('delivery.zones', [...zones].sort((a, b) => (Number(a.maxKm) || 0) - (Number(b.maxKm) || 0)));
+  const addZone = () => {
+    const last = zones[zones.length - 1];
+    set('delivery.zones', [...zones, { id: newId('z', zones), name: '', maxKm: (Number(last?.maxKm) || 0) + 5, fee: (Number(last?.fee) || 10000) + 5000, etaMin: (Number(last?.etaMin) || 30) + 10 }]);
+  };
+  const here = async () => {
+    setLocating(true);
+    try { const p = await getLocation(); setOrigin({ lat: +p.lat.toFixed(6), lng: +p.lng.toFixed(6) }); toast('Точка ресторана обновлена — не забудьте сохранить'); }
+    catch (e) { toast(e.message, 'err'); }
+    setLocating(false);
+  };
+  const bad = zones.some((z, i) => !(Number(z.maxKm) > (i ? Number(zones[i - 1].maxKm) : 0)));
   return (
     <>
-      <PageHead title="Доставка" sub="Зона клиента определяется по расстоянию от ресторана до его геолокации">{actions}</PageHead>
+      <PageHead title="Доставка" sub="Цена доставки считается по расстоянию от ресторана до точки клиента">{actions}</PageHead>
       <div className="st-stack">
-        <Card icon="storefront" title="Ресторан">
-          <div className="fld-grid">
-            <Field label="Широта"><Num value={d.delivery.origin.lat} step={0.0001} min={-90} onChange={(v) => set('delivery.origin.lat', v)} /></Field>
-            <Field label="Долгота"><Num value={d.delivery.origin.lng} step={0.0001} min={-180} onChange={(v) => set('delivery.origin.lng', v)} /></Field>
-          </div>
-          <div className="st-row">
-            <button className="btn ghost sm" onClick={here}><Icon name="my_location" />Я сейчас в ресторане</button>
-            <a className="btn ghost sm" href={`https://maps.google.com/?q=${d.delivery.origin.lat},${d.delivery.origin.lng}`} target="_blank" rel="noopener"><Icon name="map" />На карте</a>
+        <Card icon="storefront" title="Где ресторан" sub="Нажмите на карту или перетащите метку. От этой точки считаются километры до клиента.">
+          <MapPicker value={origin} onChange={setOrigin} origin={origin} zones={zones} pinClass="shop" height={300} />
+          <div className="st-under">
+            <span className="muted-t"><Icon name="location_on" /> {addr || `${origin.lat}, ${origin.lng}`}</span>
+            <button className="btn ghost sm" onClick={here} disabled={locating}><Icon name="my_location" />{locating ? 'Определяем…' : 'Я сейчас в ресторане'}</button>
           </div>
         </Card>
-        <Card icon="delivery_dining" title="Зоны доставки" sub="Дальше последней зоны доставка недоступна. Клиент видит время «приготовление + в пути».">
-          <div className="tbl-card inner">
-            <table className="tbl">
-              <thead><tr><th>Название</th><th>Радиус до, км</th><th>Стоимость, сум</th><th>В пути, мин</th><th /></tr></thead>
-              <tbody>
-                {zones.map((z, i) => (
-                  <tr key={z.id}>
-                    <td><input className="in sm" value={z.name} onChange={(e) => setZone(i, { name: e.target.value })} /></td>
-                    <td><Num className="sm w-s" value={z.maxKm} step={0.5} onChange={(v) => setZone(i, { maxKm: v })} /></td>
-                    <td><Num className="sm w-m" value={z.fee} step={1000} onChange={(v) => setZone(i, { fee: v })} /></td>
-                    <td><Num className="sm w-s" value={z.etaMin} onChange={(v) => setZone(i, { etaMin: v })} /></td>
-                    <td><button className="icon-btn xs" onClick={() => set('delivery.zones', zones.filter((_, j) => j !== i))} aria-label="Удалить"><Icon name="delete" /></button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <Card icon="delivery_dining" title="Цены за доставку" sub={`Дальше ${zones.length ? `${zones[zones.length - 1].maxKm} км` : 'последней зоны'} доставка недоступна. Заказ от ${fmtPrice(d.freeFrom)} доставляем бесплатно (меняется в «Настройках»).`}>
+          <div className="zone-rows">
+            {zones.length > 0 && <div className="zone-head"><span>От – до, км</span><span /><span>Цена, сум</span><span>В пути, мин</span><span /></div>}
+            {zones.map((z, i) => (
+              <div key={z.id} className="zone-row">
+                <span className="zone-from"><i className="zone-dot" style={{ background: zoneColor(i) }} />{i ? `${zones[i - 1].maxKm}` : '0'} –</span>
+                <Num className="sm" value={z.maxKm} step={0.5} min={0.5} onChange={(v) => setZone(i, { maxKm: v })} onBlur={sortZones} aria-label="До, км" />
+                <Num className="sm" value={z.fee} step={1000} onChange={(v) => setZone(i, { fee: v })} aria-label="Цена, сум" />
+                <Num className="sm" value={z.etaMin} step={5} min={5} onChange={(v) => setZone(i, { etaMin: v })} aria-label="В пути, мин" />
+                <button className="icon-btn xs" onClick={() => set('delivery.zones', zones.filter((_, j) => j !== i))} aria-label="Удалить зону" title="Удалить"><Icon name="delete" /></button>
+              </div>
+            ))}
+            {!zones.length && <p className="muted-t">Зон нет — доставка будет недоступна.</p>}
           </div>
-          <div className="st-under"><button className="btn ghost sm" onClick={() => set('delivery.zones', [...zones, { id: newId('z', zones), name: `Зона ${zones.length + 1}`, maxKm: (zones[zones.length - 1]?.maxKm || 0) + 5, fee: 20000, etaMin: 45 }])}><Icon name="add" />Зона</button></div>
+          {bad && <p className="st-err"><Icon name="error" /> Каждая следующая зона должна быть дальше предыдущей</p>}
+          <div className="st-under"><span className="muted-t">«мин» — время в пути, клиент видит «приготовление + в пути».</span><button className="btn ghost sm" onClick={addZone}><Icon name="add" />Добавить зону</button></div>
         </Card>
       </div>
     </>

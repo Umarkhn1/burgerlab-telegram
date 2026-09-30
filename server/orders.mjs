@@ -73,17 +73,15 @@ export function buildOrder(body, now = Date.now()) {
     customer.address = clean(c.address, 160);
     customer.details = clean(c.details, 80);
     if (customer.address.length < 5) throw new OrderError('Укажи адрес доставки');
+    // Стоимость доставки — только по расстоянию от ресторана до точки клиента
     const loc = body.location;
-    if (loc && Number.isFinite(+loc.lat) && Number.isFinite(+loc.lng)) {
-      location = { lat: +(+loc.lat).toFixed(6), lng: +(+loc.lng).toFixed(6) };
-      const z = zoneFor(location);
-      if (!z.zone) throw new OrderError(`Адрес вне зоны доставки (${z.km} км от ресторана). Выбери самовывоз`, { code: 'zone' });
-      zone = { ...z.zone, km: z.km };
-    } else {
-      const z = SETTINGS.delivery.zones.find((x) => x.id === body.zoneId);
-      if (!z) throw new OrderError('Выбери зону доставки или отправь геолокацию', { code: 'zone' });
-      zone = { ...z };
+    if (!loc || !Number.isFinite(+loc.lat) || !Number.isFinite(+loc.lng) || Math.abs(+loc.lat) > 90 || Math.abs(+loc.lng) > 180) {
+      throw new OrderError('Укажи точку доставки: геолокация или место на карте', { code: 'zone' });
     }
+    location = { lat: +(+loc.lat).toFixed(6), lng: +(+loc.lng).toFixed(6) };
+    const z = zoneFor(location);
+    if (!z.zone) throw new OrderError(`Адрес вне зоны доставки (${String(z.km).replace('.', ',')} км от ресторана). Выбери самовывоз`, { code: 'zone' });
+    zone = { ...z.zone, km: z.km };
   }
 
   // Время: «как можно скорее» только в рабочие часы, «ко времени» — сегодня до закрытия

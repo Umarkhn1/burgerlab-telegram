@@ -297,6 +297,14 @@ export function distanceKm(a, b) {
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
+// Название зоны по её диапазону: «до 3 км», «3–7 км». zones — все зоны, нужны для нижней границы.
+const kmStr = (v) => String(Math.round(Number(v) * 10) / 10).replace('.', ',');
+export function zoneName(zones, z) {
+  const from = Math.max(0, ...zones.map((x) => Number(x.maxKm)).filter((km) => km < Number(z.maxKm)));
+  return from > 0 ? `${kmStr(from)}–${kmStr(z.maxKm)} км` : `до ${kmStr(z.maxKm)} км`;
+}
+export const withZoneNames = (zones) => zones.map((z) => ({ ...z, name: zoneName(zones, z) }));
+
 // Зона по координатам: ближайшее кольцо, в которое попадает точка. null — вне зоны доставки.
 export function zoneFor(point) {
   const km = distanceKm(SETTINGS.delivery.origin, point);

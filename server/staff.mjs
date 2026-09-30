@@ -8,6 +8,7 @@ import {
 } from './store.mjs';
 import { changeStatus, changeEta } from './orders.mjs';
 import { STATUSES, MODES, DEFAULT_SETTINGS, INGREDIENTS, UPSELL, PARTY } from '../src/data.js';
+import { withZoneNames } from '../src/calc.js';
 
 export const ROLES = {
   admin: { t: 'Администратор', perms: ['orders', 'history', 'stop', 'eta', 'menu', 'settings', 'staff', 'reports', 'audit'] },
@@ -349,10 +350,14 @@ function validateSettings(s) {
   const forbidden = (Array.isArray(L.forbidden) ? L.forbidden : [])
     .filter((p) => Array.isArray(p) && p.length === 2 && p[0] !== p[1])
     .map(([a, b]) => { if (!INGREDIENTS.find((i) => i.id === a) || !INGREDIENTS.find((i) => i.id === b)) fail(400, 'Неизвестный ингредиент в запрещённых сочетаниях'); return [a, b]; });
-  const zones = (s.delivery?.zones || []).map((z, n) => ({
-    id: idOk(z.id) ? z.id : `z${n + 1}`, name: str(z.name, 60, 'название зоны'), maxKm: Math.round(Number(z.maxKm) * 10) / 10 || fail(400, 'Радиус зоны должен быть больше 0'),
+  // Название зоны строится из диапазона («до 3 км», «3–7 км») — его видят клиент, касса и кухня
+  const zones = withZoneNames((s.delivery?.zones || []).map((z, n) => ({
+    id: idOk(z.id) ? z.id : `z${n + 1}`, name: '', maxKm: Math.round(Number(z.maxKm) * 10) / 10 || fail(400, 'Расстояние «до» у зоны должно быть больше 0'),
     fee: num(z.fee, 0, 1_000_000, 'Стоимость доставки'), etaMin: num(z.etaMin, 5, 300, 'Время в пути'),
-  })).sort((a, b) => a.maxKm - b.maxKm);
+  })).sort((a, b) => a.maxKm - b.maxKm));
+  if (zones.some((z, i) => i && z.maxKm === zones[i - 1].maxKm)) fail(400, 'У двух зон одинаковое расстояние «до» — измените одну из них');
+  if (zones.length && zones[zones.length - 1].maxKm > 200) fail(400, 'Зона дальше 200 км — проверьте расстояние');
+  if (new Set(zones.map((z) => z.id)).size !== zones.length) zones.forEach((z, i) => { z.id = `z${i + 1}`; });
   const o = s.delivery?.origin || {};
   const lat = Number(o.lat), lng = Number(o.lng);
   if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) fail(400, 'Координаты ресторана указаны неверно');

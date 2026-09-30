@@ -208,9 +208,9 @@ export const DEFAULT_SETTINGS = {
   delivery: {
     origin: { lat: 41.3163, lng: 69.2486 },
     zones: [
-      { id: 'z1', name: 'Зона 1 — до 3 км', maxKm: 3, fee: 10000, etaMin: 25 },
-      { id: 'z2', name: 'Зона 2 — 3–7 км', maxKm: 7, fee: 15000, etaMin: 35 },
-      { id: 'z3', name: 'Зона 3 — 7–12 км', maxKm: 12, fee: 25000, etaMin: 50 },
+      { id: 'z1', name: 'до 3 км', maxKm: 3, fee: 10000, etaMin: 25 },
+      { id: 'z2', name: '3–7 км', maxKm: 7, fee: 15000, etaMin: 35 },
+      { id: 'z3', name: '7–12 км', maxKm: 12, fee: 25000, etaMin: 50 },
     ],
   },
 };

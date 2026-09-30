@@ -103,7 +103,7 @@ export function createBot({ token, webappUrl, kitchenChatId, apiRoot }) {
     const u = saveUser(ctx.from.id, { location, address });
     const dist = `${String(km).replace('.', ',')} км`;
     const zoneLine = zone
-      ? `🛵 ${esc(zone.name)} · ${dist} · в пути ≈ ${zone.etaMin} мин`
+      ? `🛵 ${dist} от ресторана · доставка ${fmtPrice(zone.fee)} · в пути ≈ ${zone.etaMin} мин`
       : `⚠ Это ${dist} от ресторана — вне зоны доставки. Доступны самовывоз и заказ в зале.`;
     await ctx.reply(`✅ Геолокация сохранена${address ? `: <b>${esc(address)}</b>` : ''}\n${zoneLine}`, { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } });
     if (missing(u)) return askPhone(ctx);

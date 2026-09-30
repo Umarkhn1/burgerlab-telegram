@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import { defaultMenu, withDefaults, applyMenu, applySettings, applyStop } from '../src/data.js';
+import { withZoneNames } from '../src/calc.js';
 
 const DIR = process.env.DATA_DIR || path.resolve('data');
 const FILE = path.join(DIR, 'orders.json');
@@ -33,6 +34,8 @@ export function loadStore() {
   if (!conf.menu) conf.menu = defaultMenu();
   migrateMenu(conf.menu);
   conf.settings = withDefaults(conf.settings);
+  // Старые названия («Зона 1 — до 3 км») → по диапазону («до 3 км»)
+  conf.settings.delivery.zones = withZoneNames([...conf.settings.delivery.zones].sort((a, b) => a.maxKm - b.maxKm));
   applyMenu(conf.menu);
   applySettings(conf.settings);
   applyStop(conf.stop);
