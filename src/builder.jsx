@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from './ctx.js';
 import { CATEGORIES, INGREDIENTS, ING, SIZE_PRESETS, CHALLENGES } from './data.js';
-import { stats, burgerType, fmtPrice, fmtWeight, fmtKcal, fmtCm, parseKey, layerName, layerMetrics, PACKAGING_CM, MODULE_CM, challengeProgress, plural, isStopped, checkBurger } from './calc.js';
+import { stats, burgerType, fmtPrice, fmtWeight, fmtKcal, fmtCm, parseKey, layerLabel, layerMetrics, PACKAGING_CM, MODULE_CM, challengeProgress, isStopped, checkBurger, approx } from './calc.js';
+import { t, tn, nm } from './i18n.js';
 import { BurgerStack, IngredientThumb } from './visuals.jsx';
 import { Num, Stepper, Sheet, Icon } from './ui.jsx';
 
@@ -14,20 +15,20 @@ function StatsRow({ st }) {
   return (
     <div className="stats-row">
       <div className="stat main">
-        <span className="stat-v"><Num value={st.total} format={(v) => fmtPrice(v).replace(/\s?сум$/, '')} /><small> сум</small></span>
-        <span className="stat-l">Цена</span>
+        <span className="stat-v"><Num value={st.total} format={fmtPrice} /></span>
+        <span className="stat-l">{t('Цена')}</span>
       </div>
       <div className="stat">
-        <span className="stat-v"><Num value={st.weight} format={fmtWeight} /></span>
-        <span className="stat-l">Вес</span>
+        <span className="stat-v"><Num value={st.weight} format={(v) => approx(fmtWeight(v))} /></span>
+        <span className="stat-l">{t('Вес')}</span>
       </div>
       <div className="stat">
-        <span className="stat-v"><Num value={st.kcal} format={(v) => fmtKcal(v).replace(/\s?ккал$/, '')} /><small> ккал</small></span>
-        <span className="stat-l">Калории</span>
+        <span className="stat-v"><Num value={st.kcal} format={(v) => approx(fmtKcal(v))} /></span>
+        <span className="stat-l">{t('Калории')}</span>
       </div>
       <div className="stat">
-        <span className="stat-v"><Num value={st.cm} format={(v) => fmtCm(Math.round(v * 10) / 10)} /></span>
-        <span className="stat-l">Высота</span>
+        <span className="stat-v"><Num value={st.cm} format={(v) => approx(fmtCm(Math.round(v * 10) / 10))} /></span>
+        <span className="stat-l">{t('Высота')}</span>
       </div>
     </div>
   );
@@ -36,7 +37,7 @@ function StatsRow({ st }) {
 function SizeChips() {
   const { S, A } = useApp();
   return (
-    <div className="chips size-chips" role="radiogroup" aria-label="Размер">
+    <div className="chips size-chips" role="radiogroup" aria-label={t('Размер')}>
       {SIZE_PRESETS.map((p) => (
         <button key={p.id} role="radio" aria-checked={S.sizeId === p.id} className={`chip ${S.sizeId === p.id ? 'active' : ''}`} onClick={() => A.applySize(p.id)}>
           {p.name}
@@ -52,15 +53,15 @@ function Warnings({ st }) {
   if (st.cm <= PACKAGING_CM && st.weight < 1500 && !errs.length) return null;
   return (
     <div className="warnings">
-      {errs.map((e) => <div key={e} className="warn limit"><b>{e}</b><span>Исправь состав, чтобы добавить бургер в корзину</span></div>)}
+      {errs.map((e) => <div key={e} className="warn limit"><b>{t(e)}</b><span>{t('Исправь состав, чтобы добавить бургер в корзину')}</span></div>)}
       {st.cm > PACKAGING_CM && (
-        <div className="warn"><b>Нужна специальная упаковка</b><span>+{fmtPrice(st.packaging)} — бургер выше {PACKAGING_CM} см</span></div>
+        <div className="warn"><b>{t('Нужна специальная упаковка')}</b><span>+{fmtPrice(st.packaging)} — {t('бургер выше {cm} см', { cm: PACKAGING_CM })}</span></div>
       )}
       {st.cm > MODULE_CM && (
-        <div className="warn"><b><Icon name="warning" /> Бургер выше {MODULE_CM} см</b><span>Кухня может разделить его на несколько модулей для безопасной доставки</span></div>
+        <div className="warn"><b><Icon name="warning" /> {t('Бургер выше {cm} см', { cm: MODULE_CM })}</b><span>{t('Кухня может разделить его на несколько модулей для безопасной доставки')}</span></div>
       )}
       {st.weight >= 3000 && (
-        <div className="warn fire"><b>Это Party Burger</b><span>Такой бургер рассчитан на компанию. Сборка займёт около 25 минут.</span></div>
+        <div className="warn fire"><b>{t('Это настоящий монстр')}</b><span>{t('Такой бургер рассчитан на компанию. Сборка займёт около 25 минут.')}</span></div>
       )}
     </div>
   );
@@ -81,24 +82,24 @@ export function useLayerCounts(layers) {
 
 function IngredientCard({ ing, qty, currentBun }) {
   const { S, A } = useApp();
-  const out = isStopped(ing.id) || S.stock[ing.id] === false;
+  const out = isStopped(ing.id);
   const isBun = ing.cat === 'bun';
   const selected = isBun && currentBun === ing.id;
   return (
     <div className={`ing-card ${qty > 0 || selected ? 'has' : ''} ${out ? 'out' : ''}`}>
-      <button className="ing-hit" onClick={() => (isBun ? A.setBun(ing.id) : A.addIng(ing.id))} disabled={out} aria-label={isBun ? `Выбрать булочку ${ing.name}` : `Добавить ${ing.name}`}>
+      <button className="ing-hit" onClick={() => (isBun ? A.setBun(ing.id) : A.addIng(ing.id))} disabled={out} aria-label={nm(ing)}>
         <div className="ing-thumb"><IngredientThumb ing={ing} size={isBun ? 70 : 56} /></div>
-        <div className="ing-name">{ing.name}</div>
-        <div className="ing-meta">{ing.w} г · {ing.kcal} ккал{ing.hot > 0 && <span className="hot"> · {Array.from({ length: Math.min(3, Math.ceil(ing.hot / 2)) }, (_, i) => <Icon key={i} name="local_fire_department" fill />)}</span>}</div>
+        <div className="ing-name">{nm(ing)}</div>
+        <div className="ing-meta">{approx(fmtWeight(ing.w))} · {approx(fmtKcal(ing.kcal))}{ing.hot > 0 && <span className="hot"> · {Array.from({ length: Math.min(3, Math.ceil(ing.hot / 2)) }, (_, i) => <Icon key={i} name="local_fire_department" fill />)}</span>}</div>
         <div className="ing-price">{fmtPrice(ing.price)}</div>
       </button>
-      {out ? <div className="ing-out">Нет в наличии</div> : isBun ? (
+      {out ? <div className="ing-out">{t('Нет в наличии')}</div> : isBun ? (
         <div className="bun-row">
-          <span className={`pill ${selected ? 'pill-on' : ''}`}>{selected ? 'Выбрана' : 'Выбрать'}</span>
-          <Stepper qty={qty} label={`${ing.name}, средняя булочка`} onMinus={() => A.removeIng(ing.id)} onPlus={() => A.addIng(ing.id)} />
+          <span className={`pill ${selected ? 'pill-on' : ''}`}>{selected ? t('Выбрана') : t('Выбрать')}</span>
+          <Stepper qty={qty} label={nm(ing)} onMinus={() => A.removeIng(ing.id)} onPlus={() => A.addIng(ing.id)} />
         </div>
       ) : (
-        <Stepper qty={qty} label={ing.name} onMinus={() => A.removeIng(ing.id)} onPlus={() => A.addIng(ing.id)} />
+        <Stepper qty={qty} label={nm(ing)} onMinus={() => A.removeIng(ing.id)} onPlus={() => A.addIng(ing.id)} />
       )}
     </div>
   );
@@ -108,20 +109,20 @@ function IngredientPanel({ cat: wanted, setCat, counts, currentBun, vertical }) 
   // Скрытые в админке категории и позиции не показываем
   const cats = CATEGORIES.filter((c) => !c.hidden);
   const cat = cats.some((c) => c.id === wanted) ? wanted : cats[0]?.id;
-  const list = INGREDIENTS.filter((i) => i.cat === cat && !i.hidden);
+  const list = INGREDIENTS.filter((i) => i.cat === cat && !i.hidden && !i.deleted);
   return (
     <>
-      <div className={`chips cat-chips ${vertical ? 'vertical' : ''}`} role="tablist" aria-label="Категории">
+      <div className={`chips cat-chips ${vertical ? 'vertical' : ''}`} role="tablist" aria-label={t('Категории')}>
         {cats.map((c) => {
           const n = INGREDIENTS.filter((i) => i.cat === c.id).reduce((s, i) => s + (counts[i.id] || 0), 0);
           return (
             <button key={c.id} role="tab" aria-selected={cat === c.id} className={`chip cat ${cat === c.id ? 'active' : ''}`} onClick={() => setCat(c.id)}>
-              <span className="cat-ico"><Icon name={c.icon} /></span>{c.name}{n > 0 && <span className="cat-n">{n}</span>}
+              <span className="cat-ico"><Icon name={c.icon} /></span>{nm(c)}{n > 0 && <span className="cat-n">{n}</span>}
             </button>
           );
         })}
       </div>
-      {cat === 'bun' && <p className="hint">Нажми на булочку, чтобы заменить верх и низ. «+» добавляет среднюю булочку, как в клубном бургере.</p>}
+      {cat === 'bun' && <p className="hint">{t('Нажми на булочку, чтобы заменить верх и низ. «+» добавляет среднюю булочку, как в клубном бургере.')}</p>}
       <div className="ing-grid">
         {list.map((ing) => <IngredientCard key={ing.id} ing={ing} qty={counts[ing.id] || 0} currentBun={currentBun} />)}
       </div>
@@ -193,27 +194,27 @@ function LayerList() {
           const m = layerMetrics(l.key);
           return (
             <>
-              <button className="drag-handle" {...hp} aria-label={`Переместить: ${layerName(l.key)}. Стрелки вверх и вниз меняют порядок`}>
+              <button className="drag-handle" {...hp} aria-label={layerLabel(l.key)}>
                 <svg width="14" height="18" viewBox="0 0 14 18" aria-hidden="true">{[3, 9, 15].map((y) => [4, 10].map((x) => <circle key={`${x}${y}`} cx={x} cy={y} r="1.6" fill="currentColor" />))}</svg>
               </button>
               <span className="layer-n">{i + 1}</span>
               <span className="layer-sw"><IngredientThumb ing={ing} size={26} /></span>
               <span className="layer-txt">
-                <span className="layer-name">{layerName(l.key)}</span>
-                <span className="layer-sub">{Math.round(m.w)} г · {fmtPrice(m.price)}</span>
+                <span className="layer-name">{layerLabel(l.key)}</span>
+                <span className="layer-sub">{approx(fmtWeight(m.w))} · {fmtPrice(m.price)}</span>
               </span>
               <span className="layer-actions">
-                <button className="icon-btn sm" onClick={() => A.toggleHide(l.uid)} aria-label={l.hidden ? 'Показать слой' : 'Скрыть слой'} title={l.hidden ? 'Показать' : 'Скрыть'}>
+                <button className="icon-btn sm" onClick={() => A.toggleHide(l.uid)} aria-label={l.hidden ? t('Показать') : t('Скрыть')} title={l.hidden ? t('Показать') : t('Скрыть')}>
                   {l.hidden ? (
                     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 9 6 9 6a15 15 0 0 1-3.2 3.7M6.3 7.8C4.2 9.4 3 12 3 12s4 6 9 6a8.6 8.6 0 0 0 3.6-.8" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" /></svg>
                   ) : (
                     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12s4-6 9-6 9 6 9 6-4 6-9 6-9-6-9-6Z" stroke="currentColor" strokeWidth="1.8" fill="none" /><circle cx="12" cy="12" r="2.6" fill="currentColor" /></svg>
                   )}
                 </button>
-                <button className="icon-btn sm" onClick={() => setReplace(l.uid)} aria-label="Заменить ингредиент" title="Заменить">
+                <button className="icon-btn sm" onClick={() => setReplace(l.uid)} aria-label={t('Заменить')} title={t('Заменить')}>
                   <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13l-3-3M20 16H7l3 3" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </button>
-                <button className="icon-btn sm" onClick={() => A.removeLayer(l.uid)} aria-label="Удалить слой" title="Удалить">
+                <button className="icon-btn sm" onClick={() => A.removeLayer(l.uid)} aria-label={t('Удалить')} title={t('Удалить')}>
                   <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
                 </button>
               </span>
@@ -221,14 +222,14 @@ function LayerList() {
           );
         }}
       />
-      <Sheet open={!!rep} onClose={() => setReplace(null)} title="Заменить на">
+      <Sheet open={!!rep} onClose={() => setReplace(null)} title={t('Заменить на')}>
         {repInfo && (
           <div className="replace-grid">
-            {INGREDIENTS.filter((i) => i.cat === repInfo.ing.cat && !i.hidden).map((ing) => (
-              <button key={ing.id} className={`replace-item ${ing.id === repInfo.ing.id ? 'current' : ''}`} disabled={isStopped(ing.id) || S.stock[ing.id] === false}
+            {INGREDIENTS.filter((i) => i.cat === repInfo.ing.cat && !i.hidden && !i.deleted).map((ing) => (
+              <button key={ing.id} className={`replace-item ${ing.id === repInfo.ing.id ? 'current' : ''}`} disabled={isStopped(ing.id)}
                 onClick={() => { A.replaceLayer(rep.uid, repInfo.role ? `${repInfo.role}:${ing.id}` : ing.id); setReplace(null); }}>
                 <IngredientThumb ing={ing} size={48} />
-                <span>{ing.name}</span>
+                <span>{nm(ing)}</span>
                 <small>{fmtPrice(repInfo.role ? ing.price / 2 : ing.price)}</small>
               </button>
             ))}
@@ -250,7 +251,7 @@ function ChallengeTicker({ st }) {
   return (
     <div className={`ticker ${done ? 'done' : ''}`}>
       <Icon name={near.c.icon} />
-      <span className="ticker-t">{done ? `${near.c.title}: условие выполнено — сохрани рецепт, чтобы получить бейдж` : `${near.c.title}: ${Math.round(near.p).toLocaleString('ru-RU')} / ${near.c.target.toLocaleString('ru-RU')} ${near.c.unit}`}</span>
+      <span className="ticker-t">{done ? `${near.c.title}: ${t('условие выполнено — сохрани рецепт, чтобы получить бейдж')}` : `${near.c.title}: ${Math.round(near.p).toLocaleString('ru-RU')} / ${near.c.target.toLocaleString('ru-RU')} ${t(near.c.unit)}`}</span>
       <span className="ticker-bar"><i style={{ width: `${pct}%` }} /></span>
     </div>
   );
@@ -260,16 +261,16 @@ function ActionRow() {
   const { A } = useApp();
   return (
     <div className="action-row">
-      <button className="btn ghost" onClick={A.randomize}><Icon name="casino" /> Удиви меня</button>
-      <button className="btn ghost" onClick={A.openSave}>Сохранить рецепт</button>
-      <button className="btn ghost" onClick={() => A.openShare()}>Поделиться</button>
-      <button className="btn ghost muted" onClick={A.reset}>Начать заново</button>
+      <button className="btn ghost" onClick={A.randomize}><Icon name="casino" /> {t('Удиви меня')}</button>
+      <button className="btn ghost" onClick={A.openSave}>{t('Сохранить рецепт')}</button>
+      <button className="btn ghost" onClick={() => A.openShare()}>{t('Поделиться')}</button>
+      <button className="btn ghost muted" onClick={A.reset}>{t('Начать заново')}</button>
     </div>
   );
 }
 
 // Бургер из корзины открыт на правку — кнопка обновляет ту же позицию
-const cartLabel = (S) => (S.editingCid && S.cart.some((c) => c.cid === S.editingCid) ? 'Обновить в корзине' : 'Добавить в корзину');
+const cartLabel = (S) => t(S.editingCid && S.cart.some((c) => c.cid === S.editingCid) ? 'Обновить в корзине' : 'Добавить в корзину');
 
 function CartBar({ st }) {
   const { A, S } = useApp();
@@ -277,7 +278,7 @@ function CartBar({ st }) {
     <div className="cart-bar">
       <div className="cb-price">
         <span className="cb-v"><Num value={st.total} format={fmtPrice} /></span>
-        <span className="cb-l">{st.count} {plural(st.count, 'слой', 'слоя', 'слоёв')} · {fmtWeight(st.weight)}</span>
+        <span className="cb-l">{st.count} {tn(st.count, 'слой', 'слоя', 'слоёв', 'qatlam')} · {approx(fmtWeight(st.weight))}</span>
       </div>
       <button className="btn primary" onClick={A.addCurrentToCart} disabled={st.count === 0}>{cartLabel(S)}</button>
     </div>
@@ -290,7 +291,7 @@ function useMonsterWatch(st) {
   useEffect(() => {
     const p = prev.current;
     if (p.weight < 1500 && st.weight >= 1500) A.monster('monster', st);
-    else if (p.weight < 3000 && st.weight >= 3000) A.monster('party', st);
+    else if (p.weight < 3000 && st.weight >= 3000) A.monster('mega', st);
     else if (p.cm <= PACKAGING_CM && st.cm > PACKAGING_CM && st.weight < 1500) A.monster('tall', st);
     prev.current = st;
   }, [st.weight, st.cm]);
@@ -348,7 +349,7 @@ export default function Builder() {
     return (
       <div className="builder desk">
         <aside className="b-left">
-          <h2 className="col-title">Ингредиенты</h2>
+          <h2 className="col-title">{t('Ингредиенты')}</h2>
           <IngredientPanel cat={cat} setCat={setCat} counts={counts} currentBun={currentBun} vertical={false} />
         </aside>
         <section className="b-center">
@@ -358,16 +359,16 @@ export default function Builder() {
         </section>
         <aside className="b-right">
           <div className="col-head">
-            <h2 className="col-title">Состав сверху вниз</h2>
-            <span className="muted-t">{st.count} {plural(st.count, 'слой', 'слоя', 'слоёв')}</span>
+            <h2 className="col-title">{t('Состав сверху вниз')}</h2>
+            <span className="muted-t">{st.count} {tn(st.count, 'слой', 'слоя', 'слоёв', 'qatlam')}</span>
           </div>
-          <p className="hint">Перетаскивай слои за ручку, чтобы поменять порядок.</p>
+          <p className="hint">{t('Перетаскивай слои за ручку, чтобы поменять порядок.')}</p>
           <LayerList />
           <Warnings st={st} />
           <div className="summary">
-            <div className="sum-line"><span>Ингредиенты</span><b>{fmtPrice(st.price)}</b></div>
-            {st.packaging > 0 && <div className="sum-line"><span>Спецупаковка</span><b>{fmtPrice(st.packaging)}</b></div>}
-            <div className="sum-line total"><span>Итого</span><b><Num value={st.total} format={fmtPrice} /></b></div>
+            <div className="sum-line"><span>{t('Ингредиенты')}</span><b>{fmtPrice(st.price)}</b></div>
+            {st.packaging > 0 && <div className="sum-line"><span>{t('Спецупаковка')}</span><b>{fmtPrice(st.packaging)}</b></div>}
+            <div className="sum-line total"><span>{t('Итого')}</span><b><Num value={st.total} format={fmtPrice} /></b></div>
             <button className="btn primary block" onClick={A.addCurrentToCart} disabled={st.count === 0}>{cartLabel(S)}</button>
           </div>
         </aside>
@@ -383,15 +384,15 @@ export default function Builder() {
       {stage}
       <div className="b-panel" onScroll={onPanelScroll}>
         <div className="seg" role="tablist">
-          <button role="tab" aria-selected={tab === 'ing'} className={tab === 'ing' ? 'on' : ''} onClick={() => setTab('ing')}>Ингредиенты</button>
-          <button role="tab" aria-selected={tab === 'layers'} className={tab === 'layers' ? 'on' : ''} onClick={() => setTab('layers')}>Слои · {S.layers.length}</button>
+          <button role="tab" aria-selected={tab === 'ing'} className={tab === 'ing' ? 'on' : ''} onClick={() => setTab('ing')}>{t('Ингредиенты')}</button>
+          <button role="tab" aria-selected={tab === 'layers'} className={tab === 'layers' ? 'on' : ''} onClick={() => setTab('layers')}>{t('Слои')} · {S.layers.length}</button>
         </div>
         <ChallengeTicker st={st} />
         {tab === 'ing' ? (
           <IngredientPanel cat={cat} setCat={setCat} counts={counts} currentBun={currentBun} />
         ) : (
           <>
-            <p className="hint">Слои сверху вниз. Потяни за ручку, чтобы поменять порядок.</p>
+            <p className="hint">{t('Слои сверху вниз. Потяни за ручку, чтобы поменять порядок.')}</p>
             <LayerList />
           </>
         )}

@@ -1,22 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AppCtx } from './ctx.js';
-import { ING, SIZE_PRESETS, DEFAULT_LAYERS, CHALLENGES, MOCK_KITCHEN, STOP, applyMenu, applySettings, applyStop } from './data.js';
-import { toLayers, uid, stats, insertIndexFor, parseKey, randomBurger, fmtPrice, fmtWeight, fmtCm, fmtKcal, encodeRecipe, decodeRecipe, encodeShort, decodeShort, challengeProgress, plural, canAddIng, checkBurger, isStopped, itemIssues, itemUnit, flowOf, isClosed, estimateEta, statusInfo, PACKAGING_FEE } from './calc.js';
-import { tg, inTelegram, initTelegram, tgUser, startParam, haptic, setBackButton, miniAppLink, shareToTelegram, apiCreateOrder, apiGetOrder, apiConfig, apiMe, apiMyOrders } from './telegram.js';
-import { BurgerStack } from './visuals.jsx';
+import { ING, SIZE_PRESETS, DEFAULT_LAYERS, CHALLENGES, STOP, PROD, applyMenu, applySettings, applyStop } from './data.js';
+import { toLayers, uid, stats, insertIndexFor, parseKey, randomBurger, fmtPrice, fmtWeight, fmtCm, fmtKcal, encodeRecipe, decodeRecipe, encodeShort, decodeShort, challengeProgress, canAddIng, checkBurger, isStopped, itemIssues, itemUnit, flowOf, isClosed, estimateEta, statusInfo, PACKAGING_FEE, approx } from './calc.js';
+import { tg, inTelegram, initTelegram, tgUser, startParam, haptic, setBackButton, miniAppLink, shareToTelegram, apiCreateOrder, apiGetOrder, apiConfig, apiMe, apiMyOrders, apiSetLang, apiRef, apiPay } from './telegram.js';
+import { t, tn, nm, setLang, getLang, langFromCode } from './i18n.js';
 import { Sheet, Toasts, Confetti, MiniBurger, Icon } from './ui.jsx';
 import Builder, { TypeBadge } from './builder.jsx';
-import { Home, Community, Challenges, MyBurgers, Party, Profile } from './screens.jsx';
+import { Home, Menu, Challenges, MyBurgers, Profile, ProductSheet } from './screens.jsx';
 import { Cart, Checkout, Tracking } from './commerce.jsx';
-import { Kitchen, Admin } from './ops.jsx';
-import { StaffApp, PANEL_T } from './staff.jsx';
+import { StaffApp } from './staff.jsx';
 
-// ---------- Хранилище (localStorage; позже — REST API) ----------
+// ---------- Хранилище (localStorage) ----------
 const KEY = 'burgerlab:v1';
 const DEFAULT_NAME = 'Гость';
 const initial = () => ({
   profile: { name: tgUser()?.first_name || DEFAULT_NAME },
+  lang: '',
   layers: toLayers(DEFAULT_LAYERS),
   sizeId: 'standard',
   editingId: null,
@@ -24,9 +24,6 @@ const initial = () => ({
   cart: [],
   orders: [],
   badges: {},
-  likes: {},
-  stock: {},
-  kitchenMock: MOCK_KITCHEN,
   addresses: [],
   pending: null,
   table: null,
@@ -36,7 +33,10 @@ function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return initial();
-    return { ...initial(), ...JSON.parse(raw) };
+    const s = { ...initial(), ...JSON.parse(raw) };
+    // Party Burger больше не продаётся — убираем его из старой корзины
+    s.cart = (s.cart || []).filter((it) => it.kind !== 'party');
+    return s;
   } catch { return initial(); }
 }
 function persist(s) {
@@ -47,30 +47,30 @@ function persist(s) {
 // Последний полученный конфиг кэшируется: без сети приложение открывается с ним.
 const CFG_KEY = 'burgerlab:cfg';
 function applyConfig(c) {
-  if (!c?.menu) return false;
+  if (!c?.menu?.products) return false;
   applyMenu(c.menu); applySettings(c.settings); applyStop(c.stop);
   return true;
 }
 async function fetchConfig() {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 4000);
+  const tm = setTimeout(() => ctrl.abort(), 4000);
   try {
     const c = await apiConfig(ctrl.signal);
     if (!applyConfig(c)) return null;
     try { localStorage.setItem(CFG_KEY, JSON.stringify(c)); } catch { /* ignore */ }
     return c;
-  } catch { return null; } finally { clearTimeout(t); }
+  } catch { return null; } finally { clearTimeout(tm); }
 }
 
 // Почему бургер нельзя заказать (стоп-лист или лимиты конструктора). null — можно.
 function burgerProblem(keys) {
-  const out = [...new Set(keys.map((k) => parseKey(k).ing).filter((i) => i && isStopped(i.id)).map((i) => i.name))];
-  if (out.length) return `Нет в наличии: ${out.join(', ')}. Замени эти слои`;
+  const out = [...new Set(keys.map((k) => parseKey(k).ing).filter((i) => i && isStopped(i.id)).map((i) => nm(i)))];
+  if (out.length) return t('Нет в наличии: {list}. Замени эти слои', { list: out.join(', ') });
   return checkBurger(keys)[0] || null;
 }
 const visibleKeys = (layers) => layers.filter((l) => !l.hidden).map((l) => l.key);
 
-// Демо-режим: заказ переходит на следующий этап своего сценария
+// Демо-режим (вне Telegram): заказ переходит на следующий этап своего сценария
 function advance(o) {
   const f = flowOf(o);
   const next = f[f.indexOf(o.status) + 1];
@@ -101,7 +101,7 @@ function setupPWA() {
     const start = location.href.split('#')[0];
     const manifest = {
       name: 'BurgerLab — твой бургер. Твои правила.', short_name: 'BurgerLab', start_url: start, scope: start,
-      display: 'standalone', orientation: 'portrait', background_color: '#FFFFFF', theme_color: '#FF5A00',
+      display: 'standalone', orientation: 'portrait', background_color: '#FCF9F5', theme_color: '#FF5A00',
       icons: [{ src: i192, sizes: '192x192', type: 'image/png' }, { src: i512, sizes: '512x512', type: 'image/png', purpose: 'any maskable' }],
     };
     const link = document.createElement('link');
@@ -112,28 +112,21 @@ function setupPWA() {
     apple.rel = 'apple-touch-icon';
     apple.href = i180;
     document.head.appendChild(apple);
-    // Service worker (офлайн-кэш) подключается при деплое на собственный домен: navigator.serviceWorker.register('/sw.js')
   } catch { /* не критично */ }
 }
 
 const NAV_MOBILE = [
   ['home', 'Главная', 'home'],
   ['builder', 'Собрать', 'lunch_dining'],
-  ['community', 'Community', 'groups'],
+  ['menu', 'Меню', 'restaurant_menu'],
   ['cart', 'Корзина', 'shopping_bag'],
   ['profile', 'Профиль', 'person'],
 ];
 const NAV_DESK = [
-  ['home', 'Главная', 'home'], ['builder', 'Конструктор', 'lunch_dining'], ['community', 'Популярные', 'groups'],
-  ['challenges', 'Challenges', 'emoji_events'], ['saved', 'Мои бургеры', 'bookmark'], ['party', 'Party Burger', 'celebration'],
-  ['cart', 'Корзина', 'shopping_bag'], ['profile', 'Профиль', 'person'],
+  ['home', 'Главная', 'home'], ['builder', 'Конструктор', 'lunch_dining'], ['menu', 'Меню', 'restaurant_menu'],
+  ['saved', 'Мои бургеры', 'bookmark'], ['cart', 'Корзина', 'shopping_bag'], ['profile', 'Профиль', 'person'],
 ];
-const NAV_DEMO = [
-  ['kitchen', 'Экран кухни', 'soup_kitchen'],
-  ['admin', 'Админ-панель', 'bar_chart'],
-];
-const NAV_ADMIN = ['panel', 'Админ', 'admin_panel_settings'];
-const TAB_OF = { challenges: 'community', saved: 'profile', party: 'home', checkout: 'cart', tracking: 'profile', kitchen: 'profile', admin: 'profile' };
+const TAB_OF = { challenges: 'profile', saved: 'profile', checkout: 'cart', tracking: 'profile' };
 
 // Нижняя навигация прячется, пока открыта клавиатура (иначе она перекрывает поля ввода)
 function useKeyboardOpen() {
@@ -170,21 +163,21 @@ function SaveModal({ open, onClose, onSave, defaultName, st }) {
   const author = S.profile.name.toUpperCase();
   const ideas = [
     `${author} MONSTER`,
-    st.cheese >= 4 ? 'Сырная башня' : 'Chilanzar Classic',
-    st.meat >= 4 ? 'Meat King' : st.hot >= 5 ? 'Огненный дракон' : 'Tashkent Smash',
-    st.weight >= 1500 ? 'Семейный Гигант' : 'Мой идеальный',
+    st.cheese >= 4 ? t('Сырная башня') : 'Chilanzar Classic',
+    st.meat >= 4 ? 'Meat King' : st.hot >= 5 ? t('Огненный дракон') : 'Tashkent Smash',
+    st.weight >= 1500 ? t('Семейный гигант') : t('Мой идеальный'),
   ];
   return (
-    <Sheet open={open} onClose={onClose} title="Как назовем твоего монстра?">
+    <Sheet open={open} onClose={onClose} title={t('Как назовём твоего монстра?')}>
       <div className="save-body">
         <label className="field">
-          <span>Название бургера</span>
+          <span>{t('Название бургера')}</span>
           <input autoFocus value={name} maxLength={28} onChange={(e) => setName(e.target.value)} placeholder={`${author} MONSTER`} onKeyDown={(e) => e.key === 'Enter' && onSave(name || `${author} MONSTER`)} />
         </label>
         <div className="chips wrap">
           {ideas.map((x) => <button key={x} className="chip" onClick={() => setName(x)}>{x}</button>)}
         </div>
-        <button className="btn primary block lg" onClick={() => onSave(name.trim() || `${author} MONSTER`)}>Сохранить рецепт</button>
+        <button className="btn primary block lg" onClick={() => onSave(name.trim() || `${author} MONSTER`)}>{t('Сохранить рецепт')}</button>
       </div>
     </Sheet>
   );
@@ -199,11 +192,11 @@ function RecipeCard({ r, big = false }) {
         <TypeBadge weight={st.weight} />
         <h3>{r.name}</h3>
         <div className="rc-stats">
-          <span>{st.count} {plural(st.count, 'ингредиент', 'ингредиента', 'ингредиентов')}</span>
-          <span>{fmtWeight(st.weight)}</span>
+          <span>{st.count} {tn(st.count, 'ингредиент', 'ингредиента', 'ингредиентов', 'ingredient')}</span>
+          <span>{approx(fmtWeight(st.weight))}</span>
           <b>{fmtPrice(st.total)}</b>
         </div>
-        <div className="rc-author">Автор: {r.author}</div>
+        <div className="rc-author">{t('Автор')}: {r.author}</div>
       </div>
     </div>
   );
@@ -215,7 +208,7 @@ function ShareModal({ recipe, onClose, toast }) {
   const layers = toLayers(recipe.layers);
   const tgLink = miniAppLink(encodeShort({ name: recipe.name, author: recipe.author, layers }));
   const link = tgLink || `${location.href.split('#')[0]}#r=${encodeRecipe({ name: recipe.name, author: recipe.author, layers })}`;
-  const text = `Я создал ${recipe.name} в BurgerLab: ${fmtWeight(st.weight)}, ${st.meat} ${plural(st.meat, 'котлета', 'котлеты', 'котлет')}, ${st.cheese} ${plural(st.cheese, 'сыр', 'сыра', 'сыров')}, ${fmtPrice(st.total)}. Сможешь больше?`;
+  const text = t('Я создал {name} в BurgerLab: {w}, {price}. Сможешь больше?', { name: recipe.name, w: approx(fmtWeight(st.weight)), price: fmtPrice(st.total) });
   const copy = async (msg) => {
     try { await navigator.clipboard.writeText(link); }
     catch {
@@ -223,36 +216,36 @@ function ShareModal({ recipe, onClose, toast }) {
       try { document.execCommand('copy'); } catch { /* ignore */ }
       ta.remove();
     }
-    toast(msg || 'Ссылка скопирована');
+    toast(msg || t('Ссылка скопирована'));
   };
   const native = async (app) => {
     if (navigator.share) {
       try { await navigator.share({ title: recipe.name, text, url: link }); return; } catch { return; }
     }
-    copy(`Ссылка скопирована — вставь её в ${app}`);
+    copy(t('Ссылка скопирована — вставь её в {app}', { app }));
   };
   return (
-    <Sheet open onClose={onClose} title="Поделиться бургером">
+    <Sheet open onClose={onClose} title={t('Поделиться бургером')}>
       <div className="share-card">
         <div className="sc-top">
           <span className="sc-brand">BurgerLab</span>
           <TypeBadge weight={st.weight} />
         </div>
         <div className="sc-art"><MiniBurger keys={recipe.layers} h={200} w={200} /></div>
-        <div className="sc-h">Я создал<br /><b>{recipe.name}</b></div>
+        <div className="sc-h">{t('Я создал')}<br /><b>{recipe.name}</b></div>
         <div className="sc-stats">
-          <span><b>{fmtWeight(st.weight)}</b>вес</span>
-          <span><b>{st.meat}</b>{plural(st.meat, 'котлета', 'котлеты', 'котлет')}</span>
-          <span><b>{st.cheese}</b>{plural(st.cheese, 'сыр', 'сыра', 'сыров')}</span>
-          <span><b>{fmtPrice(st.total)}</b>цена</span>
+          <span><b>{approx(fmtWeight(st.weight))}</b>{t('вес')}</span>
+          <span><b>{st.meat}</b>{tn(st.meat, 'котлета', 'котлеты', 'котлет', 'kotlet')}</span>
+          <span><b>{st.cheese}</b>{tn(st.cheese, 'сыр', 'сыра', 'сыров', 'pishloq')}</span>
+          <span><b>{fmtPrice(st.total)}</b>{t('цена')}</span>
         </div>
-        <div className="sc-q">Сможешь больше?</div>
+        <div className="sc-q">{t('Сможешь больше?')}</div>
       </div>
       <div className="share-btns">
         <button className="sb ig" onClick={() => native('Instagram')}>Instagram</button>
         <button className="sb tg" onClick={() => shareToTelegram(link, text)}>Telegram</button>
         <button className="sb tt" onClick={() => native('TikTok')}>TikTok</button>
-        <button className="sb cp" onClick={() => copy()}>Copy link</button>
+        <button className="sb cp" onClick={() => copy()}>{t('Скопировать')}</button>
       </div>
     </Sheet>
   );
@@ -261,19 +254,19 @@ function ShareModal({ recipe, onClose, toast }) {
 function MonsterPop({ m, onClose }) {
   useEffect(() => {
     if (!m) return;
-    const t = setTimeout(onClose, 5200);
-    return () => clearTimeout(t);
+    const tm = setTimeout(onClose, 5200);
+    return () => clearTimeout(tm);
   }, [m]);
   if (!m) return null;
   const { kind, st } = m;
   return (
     <div className={`monster ${kind}`} role="status" onClick={onClose}>
-      <div className="m-fire" aria-hidden="true"><Icon name={kind === 'tall' ? 'inventory_2' : kind === 'party' ? 'celebration' : 'local_fire_department'} fill /></div>
+      <div className="m-fire" aria-hidden="true"><Icon name={kind === 'tall' ? 'inventory_2' : 'local_fire_department'} fill /></div>
       <div className="m-body">
-        <b>{kind === 'tall' ? 'Высота впечатляет!' : kind === 'party' ? 'Это уже Party Burger' : 'Ты создаешь монстра!'}</b>
-        {kind === 'monster' && <span>Твой бургер уже: {fmtWeight(st.weight)} · {fmtCm(st.cm)} · {fmtKcal(st.kcal)}</span>}
-        {kind === 'party' && <span>Этот бургер относится к категории Party Burger — {fmtWeight(st.weight)}, хватит на компанию</span>}
-        {kind === 'tall' && <span>Для этого заказа потребуется специальная упаковка +{fmtPrice(PACKAGING_FEE)}</span>}
+        <b>{t(kind === 'tall' ? 'Высота впечатляет!' : kind === 'mega' ? 'Это уже мега-монстр' : 'Ты создаёшь монстра!')}</b>
+        {kind === 'monster' && <span>{t('Твой бургер уже')}: {approx(fmtWeight(st.weight))} · {approx(fmtCm(st.cm))} · {approx(fmtKcal(st.kcal))}</span>}
+        {kind === 'mega' && <span>{t('{w} — такой бургер рассчитан на компанию', { w: approx(fmtWeight(st.weight)) })}</span>}
+        {kind === 'tall' && <span>{t('Для этого заказа потребуется специальная упаковка +{sum}', { sum: fmtPrice(PACKAGING_FEE) })}</span>}
       </div>
     </div>
   );
@@ -288,6 +281,7 @@ function App() {
   const [saveOpen, setSaveOpen] = useState(false);
   const [savedResult, setSavedResult] = useState(null);
   const [share, setShare] = useState(null);
+  const [product, setProduct] = useState(null);
   const [monster, setMonster] = useState(null);
   const [install, setInstall] = useState(false);
   const deferredPrompt = useRef(null);
@@ -298,9 +292,10 @@ function App() {
   const [net, setNet] = useState('ok');
   const sendingRef = useRef(false);
   const kbOpen = useKeyboardOpen();
-  // Раздел «Админ»: флаг приходит с сервера (/api/me), доступ сервер всё равно проверяет по подписи Telegram
-  const isAdmin = inTelegram && !!S.profile.admin;
-  const wantPanel = useRef(/[?&]panel=1/.test(location.search));
+  // Сотрудник (администратор, кассир, повар из Telegram): в приложении у него только панель.
+  // Флаг приходит с сервера (/api/me), доступ к данным сервер всё равно проверяет по подписи Telegram.
+  const isStaff = inTelegram && !!S.profile.admin;
+  const [clientMode, setClientMode] = useState(false);
 
   useEffect(() => { persist(S); }, [S]);
   useEffect(() => {
@@ -315,19 +310,19 @@ function App() {
 
   const toast = useCallback((text, tone) => {
     const id = Math.random().toString(36).slice(2);
-    setToasts((t) => [...t.slice(-2), { id, text, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
+    setToasts((x) => [...x.slice(-2), { id, text, tone }]);
+    setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), 2800);
   }, []);
 
-  // Демо-трекинг: заказ сам двигается по этапам
+  // Демо-трекинг вне Telegram: заказ сам двигается по этапам
   useEffect(() => {
-    const t = setInterval(() => {
+    const tm = setInterval(() => {
       setS((s) => {
         if (!s.orders.some((o) => !isClosed(o) && !o.remote)) return s;
         return { ...s, orders: s.orders.map((o) => (!isClosed(o) && !o.remote && Date.now() - (o.touched || o.createdAt) > 8000 ? advance(o) : o)) };
       });
     }, 1000);
-    return () => clearInterval(t);
+    return () => clearInterval(tm);
   }, []);
 
   // Актуальные меню, цены и стоп-лист: раз в 30 секунд и при возвращении в приложение.
@@ -343,48 +338,54 @@ function App() {
   }, []);
   useEffect(() => {
     refreshConfig();
-    const t = setInterval(refreshConfig, 30000);
+    const tm = setInterval(refreshConfig, 30000);
     const vis = () => document.visibilityState === 'visible' && refreshConfig();
     document.addEventListener('visibilitychange', vis);
-    return () => { clearInterval(t); document.removeEventListener('visibilitychange', vis); };
+    return () => { clearInterval(tm); document.removeEventListener('visibilitychange', vis); };
   }, []);
 
-  // Рецепт из ссылки: #r=... (веб) или startapp=... (Telegram); стол в зале: ?table=5 или startapp=t5
+  // Ссылки: рецепт (#r=... или startapp=r...), стол (?table=5 или startapp=t5), заказ, приглашение друга (startapp=ref<id>)
   useEffect(() => {
     try {
-      const tableM = location.search.match(/[?&]table=(\d+)/) || startParam().match(/^t(\d+)$/);
+      const sp = startParam();
+      if (/^ref\d+$/.test(sp)) {
+        apiRef(sp).then((r) => r.ok && toast(t('Тебя пригласил друг! После первого заказа получишь котлетки 🍔'), 'ok')).catch(() => {});
+        return;
+      }
+      const tableM = location.search.match(/[?&]table=(\d+)/) || sp.match(/^t(\d+)$/);
       if (tableM) {
         const n = Number(tableM[1]);
         setS((s) => ({ ...s, table: { n, at: Date.now() } }));
-        setTimeout(() => toast(`Стол ${n}: собери заказ — мы принесём его к столу`, 'ok'), 400);
+        setTimeout(() => toast(t('Стол {n}: собери заказ — мы принесём его к столу', { n }), 'ok'), 400);
         return;
       }
       const orderM = location.search.match(/[?&]order=(\d+)/) || location.hash.match(/#order=(\d+)/);
-      if (orderM) { const id = Number(orderM[1]); syncOrder(id).then((ok) => ok && setRoute({ name: 'tracking', params: { orderId: id } })); return; }
-      const sp = startParam();
-      if (sp.startsWith('order')) { const id = Number(sp.slice(5)); syncOrder(id).then((ok) => ok && setRoute({ name: 'tracking', params: { orderId: id } })); return; }
+      if (orderM) { const id = Number(orderM[1]); setClientMode(true); syncOrder(id).then((ok) => ok && setRoute({ name: 'tracking', params: { orderId: id } })); return; }
+      if (sp.startsWith('order')) { const id = Number(sp.slice(5)); setClientMode(true); syncOrder(id).then((ok) => ok && setRoute({ name: 'tracking', params: { orderId: id } })); return; }
       const m = location.hash.match(/#r=([^&]+)/);
       const r = sp ? decodeShort(sp) : m ? decodeRecipe(decodeURIComponent(m[1])) : null;
       if (!r) return;
+      setClientMode(true);
       setS((s) => ({ ...s, layers: r.layers, sizeId: 'custom', editingId: null }));
       setRoute({ name: 'builder', params: {} });
-      setTimeout(() => toast(`${r.author} прислал бургер «${r.name}». Собери такой же или сделай лучше`), 400);
+      setTimeout(() => toast(t('{author} прислал бургер «{name}». Собери такой же или сделай лучше', r)), 400);
     } catch { /* ignore */ }
   }, []);
 
-  // Номер и геолокация, которыми клиент поделился в боте, — подставляем в заказ
+  // Данные из бота: телефон, геолокация, язык, котлетки, права сотрудника
   useEffect(() => {
     if (!inTelegram) return;
-    const pull = () => apiMe().then(({ phone, location, address, admin, role }) => {
+    const pull = () => apiMe().then((me) => {
       setS((s) => {
         const p = { ...s.profile };
-        if (phone && p.phone !== phone) Object.assign(p, { phone, phoneFromBot: true });
-        if (location && (p.botLocation?.lat !== location.lat || p.botLocation?.lng !== location.lng || p.botAddress !== address)) Object.assign(p, { botLocation: location, botAddress: address || '' });
-        p.admin = !!admin;
-        p.staffRole = role || null;
-        return p.phone === s.profile.phone && p.botLocation === s.profile.botLocation && p.botAddress === s.profile.botAddress && p.admin === !!s.profile.admin && p.staffRole === (s.profile.staffRole || null) ? s : { ...s, profile: p };
+        if (me.phone && p.phone !== me.phone) Object.assign(p, { phone: me.phone, phoneFromBot: true });
+        if (me.location && (p.botLocation?.lat !== me.location.lat || p.botLocation?.lng !== me.location.lng || p.botAddress !== me.address)) Object.assign(p, { botLocation: me.location, botAddress: me.address || '' });
+        Object.assign(p, { admin: !!me.admin, staffRole: me.role || null, cutlets: me.cutlets || 0, cutletLog: me.cutletLog || [], referral: me.referral });
+        // Язык, выбранный в боте, если в приложении его ещё не меняли
+        const lang = s.lang || me.lang || '';
+        if (lang && lang !== getLang()) setLang(lang);
+        return { ...s, profile: p, lang };
       });
-      if (admin && wantPanel.current) { wantPanel.current = false; hist.current = []; setRoute({ name: 'panel', params: {} }); }
     }).catch(() => {});
     pull();
     const vis = () => document.visibilityState === 'visible' && pull();
@@ -414,13 +415,14 @@ function App() {
     if (u && !S.profile.tg) setS((s) => ({ ...s, profile: { ...s.profile, name: ['Bobur', DEFAULT_NAME].includes(s.profile.name) ? (u.first_name || s.profile.name) : s.profile.name, tg: u.id } }));
   }, []);
 
-  const sheetOpen = saveOpen || !!savedResult || !!share || install;
+  const sheetOpen = saveOpen || !!savedResult || !!share || install || !!product;
   useEffect(() => {
+    if (isStaff && !clientMode) { setBackButton(false); return; }
     setBackButton(sheetOpen || route.name !== 'home', () => {
-      if (sheetOpen) { setSaveOpen(false); setSavedResult(null); setShare(null); setInstall(false); return; }
+      if (sheetOpen) { setSaveOpen(false); setSavedResult(null); setShare(null); setInstall(false); setProduct(null); return; }
       setRoute(hist.current.pop() || { name: 'home', params: {} });
     });
-  }, [route, sheetOpen]);
+  }, [route, sheetOpen, isStaff, clientMode]);
 
   // Загрузить заказ с сервера и сохранить локально
   const syncOrder = async (id) => {
@@ -446,15 +448,15 @@ function App() {
         const { order } = await apiGetOrder(id);
         setS((s) => {
           const cur = s.orders.find((o) => o.id === id);
-          if (!cur || (cur.status === order.status && cur.etaAt === order.etaAt)) return s;
+          if (!cur || (cur.status === order.status && cur.etaAt === order.etaAt && cur.paid === order.paid)) return s;
           if (cur.status !== order.status) haptic(order.status === 'cancelled' ? 'error' : 'success');
           return { ...s, orders: s.orders.map((o) => (o.id === id ? { ...o, ...order, remote: true } : o)) };
         });
       } catch { /* сеть */ }
     });
     tick();
-    const t = setInterval(tick, 5000);
-    return () => clearInterval(t);
+    const tm = setInterval(tick, 5000);
+    return () => clearInterval(tm);
   }, [activeRemote]);
 
   const update = (fn) => setS((s) => ({ ...s, ...fn(s) }));
@@ -463,14 +465,14 @@ function App() {
   const checkBadges = (st, s) => {
     const got = CHALLENGES.filter((c) => !s.badges[c.id] && challengeProgress(st, c.id) >= c.target);
     if (!got.length) return s.badges;
-    setTimeout(() => { toast(`Бейдж получен: ${got.map((c) => c.title).join(', ')}`, 'ok'); setConfetti(Date.now()); }, 500);
+    setTimeout(() => { toast(`${t('Бейдж получен')}: ${got.map((c) => c.title).join(', ')}`, 'ok'); setConfetti(Date.now()); }, 500);
     return { ...s.badges, ...Object.fromEntries(got.map((c) => [c.id, Date.now()])) };
   };
 
   const burgerItem = (name, layers, author) => {
     const st = stats(layers);
     const keys = layers.filter((l) => !l.hidden).map((l) => l.key);
-    return { cid: uid(), kind: 'burger', name, keys, author, qty: 1, unit: st.total, packaging: st.packaging, weight: st.weight, kcal: st.kcal, count: st.count };
+    return { cid: uid(), kind: 'burger', name, keys, author, qty: 1, unit: st.total, packaging: st.packaging, weight: st.weight, kcal: st.kcal, count: st.count, spicy: false };
   };
 
   const go = (name, params = {}) => {
@@ -482,18 +484,19 @@ function App() {
     const c = payload.customer || {};
     setS((s) => {
       const addr = payload.mode === 'delivery' && c.address
-        ? [{ address: c.address, details: c.details || '', location: payload.location || null, zoneId: order.zone?.id || payload.zoneId || null }, ...s.addresses.filter((a) => a.address !== c.address)].slice(0, 5)
+        ? [{ address: c.address, details: c.details || '', location: payload.location || null }, ...s.addresses.filter((a) => a.address !== c.address)].slice(0, 5)
         : s.addresses;
+      const cutlets = Math.max(0, (s.profile.cutlets || 0) - (order.cutletsUsed || 0));
       return {
         ...s, orders: [...s.orders.filter((o) => o.id !== order.id), order], cart: [], pending: null, addresses: addr,
-        profile: { ...s.profile, name: c.name || s.profile.name, phone: c.phone || s.profile.phone },
+        profile: { ...s.profile, name: c.name || s.profile.name, phone: c.phone || s.profile.phone, cutlets },
       };
     });
     hist.current = [{ name: 'home', params: {} }];
     setRoute({ name: 'tracking', params: { orderId: order.id } });
     setNet('ok');
     haptic('success');
-    toast(`Заказ #${order.id} принят`, 'ok');
+    toast(t('Заказ #{id} принят', { id: order.id }), 'ok');
   };
 
   // Отправка заказа на сервер. Нет связи или сервер недоступен — заказ остаётся в очереди
@@ -512,9 +515,9 @@ function App() {
       }
       setS((s) => ({ ...s, pending: null }));
       setNet('ok');
-      if (e.code === 'stop' || e.code === 'min' || e.code === 'limits') refreshConfig();
+      if (['stop', 'min', 'limits'].includes(e.code)) refreshConfig();
       haptic('error');
-      toast(e.message || 'Не удалось отправить заказ', 'err');
+      toast(e.message || t('Не удалось отправить заказ'), 'err');
       return false;
     } finally {
       sendingRef.current = false;
@@ -525,19 +528,21 @@ function App() {
     if (!inTelegram || !S.pending) return;
     const retry = () => sendPending(S.pending);
     retry();
-    const t = setInterval(retry, 5000);
+    const tm = setInterval(retry, 5000);
     window.addEventListener('online', retry);
-    return () => { clearInterval(t); window.removeEventListener('online', retry); };
+    return () => { clearInterval(tm); window.removeEventListener('online', retry); };
   }, [S.pending?.idem]);
 
   const A = {
     go,
+    toast,
     back: () => setRoute(hist.current.pop() || { name: 'home', params: {} }),
     applySize: (id) => {
       const p = SIZE_PRESETS.find((x) => x.id === id);
-      if (!p.layers) { update(() => ({ sizeId: 'custom' })); toast('Custom: собирай что угодно — ограничений по размеру нет'); return; }
+      if (!p.layers) { update(() => ({ sizeId: 'custom' })); toast(t('Custom: собирай что угодно — ограничений по размеру нет')); return; }
       update(() => ({ layers: toLayers(p.layers), sizeId: id }));
     },
+    applySizeAndGo: (id) => { if (id) A.applySize(id); go('builder'); },
     addIng: (id) => {
       const ing = ING[id];
       const why = canAddIng(visibleKeys(S.layers), id);
@@ -577,26 +582,26 @@ function App() {
     moveLayer: (from, to) => editLayers((ls) => { const n = [...ls]; const [x] = n.splice(from, 1); n.splice(to, 0, x); return n; }),
     replaceLayer: (u, key) => {
       const { ing, role } = parseKey(key);
-      const why = role && role !== 'mid' ? (isStopped(ing.id) ? `${ing.name}: нет в наличии` : null) : canAddIng(visibleKeys(S.layers.filter((l) => l.uid !== u)), ing.id);
+      const why = role && role !== 'mid' ? (isStopped(ing.id) ? t('{name}: нет в наличии', { name: nm(ing) }) : null) : canAddIng(visibleKeys(S.layers.filter((l) => l.uid !== u)), ing.id);
       if (why) { toast(why, 'err'); return; }
       editLayers((ls) => ls.map((l) => (l.uid === u ? { ...l, uid: uid(), key } : l)));
     },
-    reset: () => { randomTimer.current.forEach(clearTimeout); update(() => ({ layers: toLayers(['top:brioche', 'bottom:brioche']), sizeId: 'custom', editingId: null, editingCid: null })); toast('Чистая булочка. Добавляй слои'); },
+    reset: () => { randomTimer.current.forEach(clearTimeout); update(() => ({ layers: toLayers(['top:brioche', 'bottom:brioche']), sizeId: 'custom', editingId: null, editingCid: null })); toast(t('Чистая булочка. Добавляй слои')); },
     randomize: () => {
       randomTimer.current.forEach(clearTimeout);
       let keys = null;
       for (let i = 0; i < 40 && !keys; i++) { const k = randomBurger(); if (!burgerProblem(k)) keys = k; }
-      if (!keys) { toast('Сейчас не получается собрать случайный бургер из того, что есть в наличии', 'err'); return; }
+      if (!keys) { toast(t('Сейчас не получается собрать случайный бургер из того, что есть в наличии'), 'err'); return; }
       const top = keys[0], bottom = keys[keys.length - 1], mid = keys.slice(1, -1);
       update(() => ({ layers: toLayers([top, bottom]), sizeId: 'custom', editingId: null, editingCid: null }));
       const step = Math.max(70, Math.min(160, 1800 / mid.length));
       randomTimer.current = mid.slice().reverse().map((k, i) => setTimeout(() => {
         setS((s) => { const n = [...s.layers]; n.splice(1, 0, { uid: uid(), key: k, hidden: false }); return { ...s, layers: n }; });
       }, 200 + i * step));
-      randomTimer.current.push(setTimeout(() => toast('Готово! Не нравится — жми ещё раз'), 300 + mid.length * step));
+      randomTimer.current.push(setTimeout(() => toast(t('Готово! Не нравится — жми ещё раз')), 300 + mid.length * step));
     },
     openSave: () => {
-      if (!stats(S.layers).count) return toast('Сначала добавь хотя бы один ингредиент');
+      if (!stats(S.layers).count) return toast(t('Сначала добавь хотя бы один ингредиент'));
       setSaveOpen(true);
     },
     saveRecipe: (name) => {
@@ -622,24 +627,24 @@ function App() {
       if (!st.count) return;
       const problem = burgerProblem(visibleKeys(S.layers));
       if (problem) { haptic('error'); toast(problem, 'err'); return; }
-      // Редактировали бургер из корзины — обновляем ту же позицию (количество и название сохраняются)
+      // Редактировали бургер из корзины — обновляем ту же позицию (количество, название и острота сохраняются)
       const editing = S.editingCid && S.cart.find((c) => c.cid === S.editingCid);
       if (editing) {
-        setS((s) => ({ ...s, editingCid: null, cart: s.cart.map((c) => (c.cid === editing.cid ? { ...burgerItem(c.name, s.layers, c.author), cid: c.cid, qty: c.qty } : c)), badges: checkBadges(st, s) }));
+        setS((s) => ({ ...s, editingCid: null, cart: s.cart.map((c) => (c.cid === editing.cid ? { ...burgerItem(c.name, s.layers, c.author), cid: c.cid, qty: c.qty, spicy: c.spicy } : c)), badges: checkBadges(st, s) }));
         haptic('medium');
         go('cart');
-        toast(`«${editing.name}» обновлён · ${fmtPrice(st.total)}`, 'ok');
+        toast(t('«{name}» обновлён · {sum}', { name: editing.name, sum: fmtPrice(st.total) }), 'ok');
         return;
       }
-      const name = S.saved.find((x) => x.id === S.editingId)?.name || `Мой бургер №${S.cart.filter((c) => c.kind === 'burger').length + 1}`;
+      const name = S.saved.find((x) => x.id === S.editingId)?.name || t('Мой бургер №{n}', { n: S.cart.filter((c) => c.kind === 'burger').length + 1 });
       setS((s) => ({ ...s, cart: [...s.cart, burgerItem(name, s.layers, s.profile.name)], badges: checkBadges(st, s) }));
       haptic('medium');
-      toast(`«${name}» в корзине · ${fmtPrice(st.total)}`, 'ok');
+      toast(t('«{name}» в корзине · {sum}', { name, sum: fmtPrice(st.total) }), 'ok');
     },
     loadRecipe: (b, editing) => {
       update(() => ({ layers: toLayers(b.layers), sizeId: 'custom', editingId: editing ? b.id : null, editingCid: null }));
       go('builder');
-      toast(editing ? `Редактируешь «${b.name}»` : `«${b.name}» в конструкторе — меняй как хочешь`);
+      toast(editing ? t('Редактируешь «{name}»', b) : t('«{name}» в конструкторе — меняй как хочешь', b));
     },
     editSaved: (r) => A.loadRecipe(r, true),
     orderAgain: (r) => {
@@ -647,36 +652,43 @@ function App() {
       if (problem) { A.loadRecipe(r, false); toast(problem, 'err'); return; }
       setS((s) => ({ ...s, cart: [...s.cart, burgerItem(r.name, toLayers(r.layers), r.author)] }));
       go('cart');
-      toast(`«${r.name}» снова в корзине`, 'ok');
+      toast(t('«{name}» снова в корзине', r), 'ok');
     },
-    deleteSaved: (id) => { update((s) => ({ saved: s.saved.filter((x) => x.id !== id), editingId: s.editingId === id ? null : s.editingId })); toast('Рецепт удалён'); },
-    toggleLike: (id) => update((s) => ({ likes: { ...s.likes, [id]: !s.likes[id] } })),
-    startChallenge: (id) => { const c = CHALLENGES.find((x) => x.id === id); go('builder'); toast(c.goal); },
-    addParty: (opt) => {
-      if (STOP.party || STOP[opt.id]) { toast('Party Burger сейчас недоступен', 'err'); return; }
-      update((s) => ({ cart: [...s.cart, { cid: uid(), kind: 'party', name: `Party Burger на ${opt.people}`, qty: 1, unit: opt.price, weight: opt.weight, people: opt.people }] }));
-      toast(`Party Burger на ${opt.people} в корзине`, 'ok');
-    },
-    addExtra: (u) => {
-      if (STOP[u.id]) { toast(`${u.name}: нет в наличии`, 'err'); return; }
-      update((s) => {
-        const ex = s.cart.find((c) => c.kind === 'extra' && c.id === u.id);
-        if (ex) return { cart: s.cart.map((c) => (c === ex ? { ...c, qty: c.qty + 1 } : c)) };
-        return { cart: [...s.cart, { cid: uid(), kind: 'extra', id: u.id, name: u.name, note: u.note, icon: u.icon, qty: 1, unit: u.price }] };
+    deleteSaved: (id) => { update((s) => ({ saved: s.saved.filter((x) => x.id !== id), editingId: s.editingId === id ? null : s.editingId })); toast(t('Рецепт удалён')); },
+    startChallenge: (id) => { const c = CHALLENGES.find((x) => x.id === id); go('builder'); toast(t(c.goal)); },
+    // ── Меню ──
+    openProduct: (p) => setProduct(p),
+    // Одинаковые товары с одинаковой остротой складываются в одну позицию
+    addProduct: (p, { spicy = false, qty = 1 } = {}) => {
+      if (STOP[p.id] || p.hidden) { toast(t('{name}: нет в наличии', { name: nm(p) }), 'err'); return; }
+      const sp = p.spicy ? !!spicy : undefined;
+      setS((s) => {
+        const ex = s.cart.find((c) => (c.kind === 'product' || c.kind === 'extra') && c.id === p.id && c.spicy === sp);
+        if (ex) return { ...s, cart: s.cart.map((c) => (c === ex ? { ...c, kind: 'product', qty: Math.min(20, c.qty + qty) } : c)) };
+        return { ...s, cart: [...s.cart, { cid: uid(), kind: 'product', id: p.id, cat: p.cat, name: p.name, nameUz: p.nameUz, note: p.note, icon: p.icon, qty, unit: p.price, spicy: sp }] };
       });
+      haptic('light');
+      toast(t('«{name}» в корзине', { name: nm(p) }), 'ok');
     },
+    productQty: (id, d) => setS((s) => {
+      const items = s.cart.filter((c) => (c.kind === 'product' || c.kind === 'extra') && c.id === id);
+      const last = items[items.length - 1];
+      if (!last) return s;
+      return { ...s, cart: s.cart.map((c) => (c === last ? { ...c, qty: c.qty + d } : c)).filter((c) => c.qty > 0) };
+    }),
+    setSpicy: (cid, v) => { haptic('select'); update((s) => ({ cart: s.cart.map((c) => (c.cid === cid ? { ...c, spicy: v } : c)) })); },
     cartQty: (cid, d) => update((s) => ({ cart: s.cart.map((c) => (c.cid === cid ? { ...c, qty: Math.min(20, c.qty + d) } : c)).filter((c) => c.qty > 0) })),
     // Позиция остаётся в корзине, пока правки не сохранены: ушёл из конструктора — ничего не потерялось
     editCartItem: (it) => {
       update(() => ({ layers: toLayers(it.keys), sizeId: 'custom', editingId: null, editingCid: it.cid }));
       go('builder');
-      toast(`Редактируешь «${it.name}». Нажми «Обновить в корзине», когда закончишь`);
+      toast(t('Редактируешь «{name}». Нажми «Обновить в корзине», когда закончишь', it));
     },
     cancelCartEdit: () => update(() => ({ editingCid: null })),
-    // payload: { mode, customer, table, zoneId, location, desiredTime, payment, comment } — собирает экран оформления
-    placeOrder: async (payload, t) => {
+    // payload собирает экран оформления: способ получения, клиент, адрес, оплата, промокод, котлетки
+    placeOrder: async (payload, tot) => {
       if (inTelegram) {
-        // Реальный заказ: сервер проверит подпись Telegram, пересчитает цены, стоп-лист и лимиты и передаст заказ на кассу.
+        // Реальный заказ: сервер проверит подпись Telegram, пересчитает цены, промокод, котлетки, стоп-лист и лимиты.
         // Ключ idem защищает от дублей: повторная отправка вернёт уже созданный заказ.
         const pending = { idem: `${uid()}${Math.random().toString(36).slice(2, 8)}`, payload: { ...payload, items: S.cart, clientAt: Date.now() } };
         setS((s) => ({ ...s, pending }));
@@ -684,32 +696,41 @@ function App() {
       }
       const now = Date.now();
       const id = 4827 + S.orders.length;
-      const o = { id, items: S.cart, createdAt: now, status: 'created', statusAt: { created: now }, sub: t.sub, fee: t.fee, total: t.total, ...payload };
+      const o = { id, items: S.cart, createdAt: now, status: 'created', statusAt: { created: now }, sub: tot.sub, fee: tot.fee, discount: tot.discount, total: tot.total, paid: false, ...payload, promo: payload.promo ? { code: payload.promo, discount: tot.discount } : null };
       finishOrder({ ...o, etaAt: estimateEta(o, now) }, payload);
       return true;
     },
-    dropPending: () => { setS((s) => ({ ...s, pending: null })); setNet('ok'); toast('Заказ не отправлен. Если он уже дошёл до кассы, он появится в /orders у бота'); },
+    // Оплата Click / Payme (тестовый режим)
+    payOrder: async (o) => {
+      try {
+        const order = inTelegram ? (await apiPay(o.id)).order : { ...o, paid: true };
+        setS((s) => ({ ...s, orders: s.orders.map((x) => (x.id === o.id ? { ...x, ...order, remote: x.remote } : x)) }));
+        haptic('success');
+        return true;
+      } catch (e) { toast(e.message, 'err'); return false; }
+    },
+    dropPending: () => { setS((s) => ({ ...s, pending: null })); setNet('ok'); toast(t('Заказ не отправлен. Если он уже дошёл до кассы, он появится в /orders у бота')); },
     repeatOrder: (o) => {
-      const items = o.items.map((it) => ({ ...it, cid: uid(), unit: itemUnit(it) }));
+      const items = o.items.filter((it) => it.kind === 'burger' || it.kind === 'product' || it.kind === 'extra').map((it) => ({ ...it, kind: it.kind === 'extra' ? 'product' : it.kind, cid: uid(), unit: itemUnit(it) }));
       const ok = items.filter((it) => !itemIssues(it).length);
-      if (!ok.length) { toast('Позиций из этого заказа сейчас нет в наличии', 'err'); return; }
+      if (!ok.length) { toast(t('Позиций из этого заказа сейчас нет в наличии'), 'err'); return; }
       setS((s) => ({ ...s, cart: [...s.cart, ...ok] }));
       go('cart');
-      toast(ok.length < items.length ? `Добавлено ${ok.length} из ${items.length}: остального нет в наличии` : 'Заказ снова в корзине — проверь и оформи', ok.length < items.length ? 'err' : 'ok');
+      toast(ok.length < o.items.length ? t('Добавлено {n} из {all}: остального нет в наличии', { n: ok.length, all: o.items.length }) : t('Заказ снова в корзине — проверь и оформи'), ok.length < o.items.length ? 'err' : 'ok');
     },
-    kitchenLive: (id, to) => update((s) => ({ orders: s.orders.map((o) => {
-      if (o.id !== id) return o;
-      const f = flowOf(o);
-      return f.indexOf(to) > f.indexOf(o.status) ? { ...o, status: to, statusAt: { ...o.statusAt, [to]: Date.now() }, touched: Date.now() } : o;
-    }) })),
-    kitchenMock: (id, to) => update((s) => ({ kitchenMock: s.kitchenMock.map((o) => (o.id === id ? { ...o, status: to } : o)) })),
-    toggleStock: (id) => update((s) => ({ stock: { ...s.stock, [id]: s.stock[id] === false } })),
     setProfile: (p) => update((s) => ({ profile: { ...s.profile, ...p } })),
-    // В Telegram профиль (имя, телефон, адрес из бота, права) сохраняется — чистим только данные на устройстве
+    setLang: (lang) => {
+      setLang(lang);
+      haptic('select');
+      update(() => ({ lang }));
+      if (inTelegram) apiSetLang(lang).catch(() => {});
+    },
+    backToPanel: () => { setClientMode(false); hist.current = []; setRoute({ name: 'home', params: {} }); },
+    // В Telegram профиль (имя, телефон, адрес из бота, права, котлетки) сохраняется — чистим только данные на устройстве
     resetDemo: () => {
-      if (!window.confirm(inTelegram ? 'Удалить корзину, сохранённые рецепты и бейджи на этом устройстве?' : 'Удалить корзину, рецепты, заказы и бейджи?')) return;
-      setS((s) => ({ ...initial(), ...(inTelegram ? { profile: s.profile, orders: s.orders.filter((o) => o.remote), addresses: s.addresses } : {}) }));
-      hist.current = []; setRoute({ name: 'home', params: {} }); toast(inTelegram ? 'Данные на устройстве очищены' : 'Демо-данные сброшены');
+      if (!window.confirm(t(inTelegram ? 'Удалить корзину, сохранённые рецепты и бейджи на этом устройстве?' : 'Удалить корзину, рецепты, заказы и бейджи?'))) return;
+      setS((s) => ({ ...initial(), lang: s.lang, ...(inTelegram ? { profile: s.profile, orders: s.orders.filter((o) => o.remote), addresses: s.addresses } : {}) }));
+      hist.current = []; setRoute({ name: 'home', params: {} }); toast(t(inTelegram ? 'Данные на устройстве очищены' : 'Данные сброшены'));
     },
     installHint: async () => {
       if (deferredPrompt.current) { deferredPrompt.current.prompt(); deferredPrompt.current = null; return; }
@@ -718,28 +739,33 @@ function App() {
     monster: (kind, st) => { haptic('heavy'); setMonster({ kind, st, t: Date.now() }); },
   };
 
+  const currentSt = useMemo(() => stats(S.layers), [S.layers]);
+
+  // Сотрудник: только панель (касса, кухня или админка), без клиентских экранов
+  if (isStaff && !clientMode) {
+    return (
+      <AppCtx.Provider value={{ S, A, isDesktop, cfgRev }}>
+        <div className="app staff-only">
+          <StaffApp embedded initData={tg.initData} onClientMode={() => { setClientMode(true); hist.current = []; setRoute({ name: 'home', params: {} }); }} />
+        </div>
+      </AppCtx.Provider>
+    );
+  }
+
   const cartCount = S.cart.reduce((s, i) => s + i.qty, 0);
   const tab = TAB_OF[route.name] || route.name;
-  // Кассиру вкладка называется «Касса», администратору — «Админ»
-  const navPanel = [NAV_ADMIN[0], PANEL_T[S.profile.staffRole] || NAV_ADMIN[1], S.profile.staffRole === 'cashier' ? 'point_of_sale' : NAV_ADMIN[2]];
-  const navMobile = isAdmin ? [...NAV_MOBILE, navPanel] : NAV_MOBILE;
-  const tabIdx = navMobile.findIndex(([id]) => id === tab);
-  const currentSt = useMemo(() => stats(S.layers), [S.layers]);
+  const tabIdx = NAV_MOBILE.findIndex(([id]) => id === tab);
 
   let screen;
   switch (route.name) {
     case 'builder': screen = <Builder />; break;
-    case 'community': screen = <Community />; break;
+    case 'menu': screen = <Menu initialCat={route.params.cat} />; break;
     case 'challenges': screen = <Challenges />; break;
     case 'saved': screen = <MyBurgers />; break;
-    case 'party': screen = <Party />; break;
     case 'cart': screen = <Cart />; break;
     case 'checkout': screen = <Checkout />; break;
     case 'tracking': screen = <Tracking orderId={route.params.orderId} />; break;
-    case 'kitchen': screen = <Kitchen />; break;
-    case 'admin': screen = <Admin />; break;
-    case 'profile': screen = <Profile />; break;
-    case 'panel': screen = isAdmin ? <StaffApp embedded initData={tg.initData} /> : <Home />; break;
+    case 'profile': screen = <Profile focus={route.params.focus} />; break;
     default: screen = <Home />;
   }
 
@@ -748,22 +774,18 @@ function App() {
   return (
     <AppCtx.Provider value={{ S, A, isDesktop, cfgRev }}>
       <div className={`app ${isDesktop ? 'is-desk' : 'is-mob'} r-${route.name}`}>
-        {isDesktop && route.name !== 'kitchen' && (
-          <nav className="sidebar" aria-label="Навигация">
-            <button className="side-logo" onClick={() => go('home')} aria-label="BurgerLab, главная"><Logo /></button>
+        {isDesktop && (
+          <nav className="sidebar" aria-label={t('Навигация')}>
+            <button className="side-logo" onClick={() => go('home')} aria-label="BurgerLab"><Logo /></button>
             <div className="side-links">
-              {(isAdmin ? [...NAV_DESK, navPanel] : NAV_DESK).map(([id, t, d]) => (
-                <button key={id} className={`side-link ${route.name === id ? 'on' : ''}`} onClick={() => go(id)} title={t}>
-                  <Icon name={d} fill={route.name === id} /><span className="sl-t">{t}</span>{id === 'cart' && cartCount > 0 && <span className="count">{cartCount}</span>}
+              {NAV_DESK.map(([id, label, d]) => (
+                <button key={id} className={`side-link ${route.name === id ? 'on' : ''}`} onClick={() => go(id)} title={t(label)}>
+                  <Icon name={d} fill={route.name === id} /><span className="sl-t">{t(label)}</span>{id === 'cart' && cartCount > 0 && <span className="count">{cartCount}</span>}
                 </button>
               ))}
             </div>
             <div className="side-demo">
-              {!inTelegram && <span className="side-cap">Демо для партнёров</span>}
-              {!inTelegram && NAV_DEMO.map(([id, t, d]) => (
-                <button key={id} className={`side-link ${route.name === id ? 'on' : ''}`} onClick={() => go(id)} title={t}><Icon name={d} /><span className="sl-t">{t}</span></button>
-              ))}
-              {activeOrder && <button className="side-order" onClick={() => go('tracking', { orderId: activeOrder.id })} title={`Заказ #${activeOrder.id}`}><Icon name={statusInfo(activeOrder).ms} /><span className="sl-t"> Заказ #{activeOrder.id}: {statusInfo(activeOrder).t.toLowerCase()}</span></button>}
+              {activeOrder && <button className="side-order" onClick={() => go('tracking', { orderId: activeOrder.id })} title={`#${activeOrder.id}`}><Icon name={statusInfo(activeOrder).ms} /><span className="sl-t"> #{activeOrder.id}: {t(statusInfo(activeOrder).t).toLowerCase()}</span></button>}
             </div>
           </nav>
         )}
@@ -772,44 +794,44 @@ function App() {
         )}
         {S.pending && (
           <div className={`pending-bar ${net === 'offline' ? 'off' : ''}`} role="status">
-            <span><Icon name={net === 'offline' ? 'wifi_off' : 'hourglass_top'} /> {net === 'offline' ? 'Нет связи. Заказ сохранён и отправится автоматически' : 'Отправляем заказ…'}</span>
-            {net === 'offline' && <button className="link sm" onClick={A.dropPending}>Не отправлять</button>}
+            <span><Icon name={net === 'offline' ? 'wifi_off' : 'hourglass_top'} /> {t(net === 'offline' ? 'Нет связи. Заказ сохранён и отправится автоматически' : 'Отправляем заказ…')}</span>
+            {net === 'offline' && <button className="link sm" onClick={A.dropPending}>{t('Не отправлять')}</button>}
           </div>
         )}
         <main className="main" ref={mainRef}><div className="screen" key={route.name}>{screen}</div></main>
-        {!isDesktop && route.name !== 'kitchen' && (
-          <nav className={`tabbar ${kbOpen ? 'hide' : ''}`} aria-label="Навигация" style={{ '--n': navMobile.length, '--i': Math.max(0, tabIdx) }}>
+        {!isDesktop && (
+          <nav className={`tabbar ${kbOpen ? 'hide' : ''}`} aria-label={t('Навигация')} style={{ '--n': NAV_MOBILE.length, '--i': Math.max(0, tabIdx) }}>
             <span className={`tab-ind ${tabIdx < 0 ? 'off' : ''}`} aria-hidden="true" />
-            {navMobile.map(([id, t, d]) => (
+            {NAV_MOBILE.map(([id, label, d]) => (
               <button key={id} className={`tab ${tab === id ? 'on' : ''} ${id === 'builder' ? 'tab-build' : ''}`} onClick={() => { if (tab !== id) haptic('select'); hist.current = []; setRoute({ name: id, params: {} }); }} aria-current={tab === id ? 'page' : undefined}>
                 <span className="tab-ico"><Icon name={d} fill={tab === id} />{id === 'cart' && cartCount > 0 && <span className="count" key={cartCount}>{cartCount}</span>}</span>
-                <span className="tab-t">{t}</span>
+                <span className="tab-t">{t(label)}</span>
               </button>
             ))}
           </nav>
         )}
 
         <SaveModal open={saveOpen} onClose={() => setSaveOpen(false)} onSave={A.saveRecipe} st={currentSt} defaultName={S.saved.find((x) => x.id === S.editingId)?.name} />
-        <Sheet open={!!savedResult} onClose={() => setSavedResult(null)} title="Рецепт сохранён">
+        <Sheet open={!!savedResult} onClose={() => setSavedResult(null)} title={t('Рецепт сохранён')}>
           {savedResult && (
             <div className="saved-result">
               <RecipeCard r={savedResult} big />
               <div className="sr-btns">
-                <button className="btn primary block lg" onClick={() => { A.addCurrentToCart(); setSavedResult(null); }}>Добавить в корзину</button>
+                <button className="btn primary block lg" onClick={() => { A.addCurrentToCart(); setSavedResult(null); }}>{t('Добавить в корзину')}</button>
                 <div className="row2">
-                  <button className="btn outline" onClick={() => { const r = savedResult; setSavedResult(null); setShare(r); }}>Поделиться</button>
-                  <button className="btn outline" onClick={() => { setSavedResult(null); go('saved'); }}>Мои бургеры</button>
+                  <button className="btn outline" onClick={() => { const r = savedResult; setSavedResult(null); setShare(r); }}>{t('Поделиться')}</button>
+                  <button className="btn outline" onClick={() => { setSavedResult(null); go('saved'); }}>{t('Мои бургеры')}</button>
                 </div>
               </div>
             </div>
           )}
         </Sheet>
         <ShareModal recipe={share} onClose={() => setShare(null)} toast={toast} />
-        <Sheet open={install} onClose={() => setInstall(false)} title="BurgerLab на домашнем экране">
+        {product && <ProductSheet p={PROD[product.id] || product} onClose={() => setProduct(null)} />}
+        <Sheet open={install} onClose={() => setInstall(false)} title={t('BurgerLab на домашнем экране')}>
           <div className="install">
-            <p><b>iPhone (Safari):</b> нажми «Поделиться» внизу экрана и выбери «На экран „Домой“».</p>
-            <p><b>Android (Chrome):</b> открой меню ⋮ и выбери «Установить приложение» или «Добавить на главный экран».</p>
-            <p className="fine">Иконка BurgerLab появится рядом с остальными приложениями, и сервис будет открываться без адресной строки.</p>
+            <p><b>iPhone (Safari):</b> {t('нажми «Поделиться» внизу экрана и выбери «На экран „Домой“».')}</p>
+            <p><b>Android (Chrome):</b> {t('открой меню ⋮ и выбери «Установить приложение» или «Добавить на главный экран».')}</p>
           </div>
         </Sheet>
         <MonsterPop m={monster} onClose={() => setMonster(null)} />
@@ -820,10 +842,11 @@ function App() {
   );
 }
 
-// Старт: сначала меню, цены и стоп-лист (с сервера или из кэша), затем интерфейс
+// Старт: язык, меню, цены и стоп-лист (с сервера или из кэша), затем интерфейс
 async function boot() {
   initTelegram();
   setupPWA();
+  try { setLang(JSON.parse(localStorage.getItem(KEY) || '{}').lang || langFromCode(tgUser()?.language_code || navigator.language)); } catch { setLang('ru'); }
   try { applyConfig(JSON.parse(localStorage.getItem(CFG_KEY) || 'null')); } catch { /* нет кэша */ }
   await fetchConfig();
   createRoot(document.getElementById('root')).render(<App />);

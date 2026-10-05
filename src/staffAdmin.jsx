@@ -1,8 +1,9 @@
 // Разделы админ-панели: стоп-лист, заказы, отчёты, меню, настройки, доставка, сотрудники, журнал.
 import React, { useEffect, useState } from 'react';
-import { CATEGORIES, INGREDIENTS, UPSELL, PARTY, STOP, SETTINGS, STATUSES, MODES } from './data.js';
-import { fmtPrice, fmtDateTime, statusInfo } from './calc.js';
+import { CATEGORIES, INGREDIENTS, PRODUCTS, PRODUCT_CATS, STOP, SETTINGS, STATUSES, MODES, PAYMENTS, SIZE_PRESETS } from './data.js';
+import { fmtPrice, fmtDateTime, statusInfo, productInfo, layerName } from './calc.js';
 import { Icon } from './ui.jsx';
+import { ProductArt } from './visuals.jsx';
 import { MENU_ICONS } from './icons.js';
 import { MapPicker, reverseGeocode, zoneColor } from './map.jsx';
 import { getLocation } from './telegram.js';
@@ -70,9 +71,8 @@ export function StopList({ api, toast, reloadConfig }) {
   const [busy, setBusy] = useState('');
   const needle = q.trim().toLowerCase();
   const groups = [
-    ...CATEGORIES.map((c) => ({ icon: c.icon, title: c.name, items: INGREDIENTS.filter((i) => i.cat === c.id && !i.hidden).map((i) => ({ id: i.id, name: i.name })) })),
-    { icon: 'fastfood', title: 'Допы к заказу', items: UPSELL.filter((u) => !u.hidden).map((u) => ({ id: u.id, name: u.name })) },
-    { icon: 'celebration', title: 'Party Burger', items: [{ id: 'party', name: 'Все размеры' }, ...PARTY.filter((p) => !p.hidden).map((p) => ({ id: p.id, name: `На ${p.people} человек` }))] },
+    ...PRODUCT_CATS.map((c) => ({ icon: c.icon, title: `Меню: ${c.name}`, items: PRODUCTS.filter((x) => x.cat === c.id && !x.hidden).map((x) => ({ id: x.id, name: x.name })) })),
+    ...CATEGORIES.map((c) => ({ icon: c.icon, title: `Конструктор: ${c.name}`, items: INGREDIENTS.filter((i) => i.cat === c.id && !i.hidden && !i.deleted).map((i) => ({ id: i.id, name: i.name })) })),
   ].map((g) => ({ ...g, items: g.items.filter((i) => !needle || i.name.toLowerCase().includes(needle)) })).filter((g) => g.items.length);
 
   const toggle = async (item) => {
@@ -136,10 +136,10 @@ export function History({ api, toast, openOrder, rev }) {
   useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [period, status, mode, q, rev]);
 
   const csv = () => {
-    const rows = [['Номер', 'Создан', 'Способ', 'Стол/адрес', 'Клиент', 'Телефон', 'Позиции', 'Сумма', 'Оплата', 'Статус', 'Причина отмены']];
+    const rows = [['Номер', 'Создан', 'Способ', 'Стол/адрес', 'Клиент', 'Телефон', 'Позиции', 'Сумма', 'Оплата', 'Статус', 'Причина отмены', 'Промокод', 'Котлетки']];
     for (const o of data.orders) {
       rows.push([o.id, fmtDateTime(o.createdAt), MODES[o.mode]?.t, o.mode === 'hall' ? `Стол ${o.table}` : o.customer?.address || '', o.customer?.name || o.tgName || '', o.customer?.phone || '',
-        o.items.map((i) => `${i.name} × ${i.qty}`).join('; '), o.total, o.payment === 'cash' ? 'Наличные' : 'Карта', STATUSES[o.status].t, o.cancelReason || '']);
+        o.items.map((i) => `${i.name}${i.spicy ? ' (острый)' : ''} × ${i.qty}`).join('; '), o.total, `${PAYMENTS[o.payment]?.t || o.payment}${PAYMENTS[o.payment]?.online ? (o.paid ? ' · оплачено' : ' · не оплачено') : ''}`, STATUSES[o.status]?.t || o.status, o.cancelReason || '', o.promo?.code || '', o.cutletsUsed || '']);
     }
     const text = '﻿' + rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
     const a = document.createElement('a');
@@ -213,6 +213,16 @@ export function Reports({ api, toast, rev }) {
             <Kpi icon="cancel" k="Отменено" v={`${r.cancelled}${r.count ? ` · ${Math.round((r.cancelled / r.count) * 100)}%` : ''}`} tone={r.cancelled ? 'bad' : ''} />
             <Kpi icon="payments" k="Выручка" v={fmtPrice(r.revenue)} tone="accent" />
             <Kpi icon="savings" k="Средний чек" v={fmtPrice(r.avgCheck)} />
+            <Kpi icon="sell" k="С промокодом" v={`${r.promoOrders} · −${fmtPrice(r.promoDiscount)}`} />
+            <Kpi icon="redeem" k="Оплачено котлетками" v={`${r.cutletOrders} · −${fmtPrice(r.cutletSum)}`} />
+          </div>
+          <div className="card-grid">
+            <Card icon="sell" title="Промокоды">
+              {r.promos.length ? r.promos.map(([code, x]) => <div key={code} className="kv"><span><b>{code}</b></span><b>{x.count} зак. · −{fmtPrice(x.discount)}</b></div>) : <p className="muted-t">Промокоды не использовали</p>}
+            </Card>
+            <Card icon="payments" title="Способы оплаты">
+              {Object.entries(r.byPayment).map(([k, x]) => <div key={k} className="kv"><span>{PAYMENTS[k]?.t}</span><b>{x.count} · {fmtPrice(x.revenue)}</b></div>)}
+            </Card>
           </div>
           <div className="kpi-grid">
             <Kpi icon="point_of_sale" k="Принятие" v={min(r.avgAcceptMin)} />
@@ -253,19 +263,23 @@ function IconPick({ value, onChange }) {
   );
 }
 
+const PRODUCT_ICONS = ['fastfood', 'lunch_dining', 'kebab_dining', 'eco', 'tapas', 'water_drop', 'local_drink', 'water_bottle', 'local_cafe', 'sports_bar', 'cake', 'icecream', 'cookie', 'local_pizza', 'ramen_dining', 'rice_bowl', 'egg', 'bakery_dining', 'restaurant'];
+
 export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
-  const snapshot = () => clone({ categories: CATEGORIES, ingredients: INGREDIENTS, extras: UPSELL, party: PARTY });
+  const snapshot = () => clone({ categories: CATEGORIES, ingredients: INGREDIENTS, productCats: PRODUCT_CATS, products: PRODUCTS });
   const [m, setM] = useState(snapshot);
   const [dirty, setDirty] = useState(false);
-  const [tab, setTab] = useState('ingredients');
+  const [tab, setTab] = useState('products');
   const [cat, setCat] = useState(CATEGORIES[0]?.id);
+  const [pcat, setPcat] = useState(PRODUCT_CATS[0]?.id);
+  const [open, setOpen] = useState(null);
   const [saving, setSaving] = useState(false);
   useEffect(() => { if (!dirty) setM(snapshot()); }, [cfgRev]);
 
   const edit = (key, id, patch) => { setDirty(true); setM((x) => ({ ...x, [key]: x[key].map((it) => (it.id === id ? { ...it, ...patch } : it)) })); };
   const add = (key, item) => { setDirty(true); setM((x) => ({ ...x, [key]: [...x[key], item] })); };
   const remove = (key, id) => { setDirty(true); setM((x) => ({ ...x, [key]: x[key].filter((it) => it.id !== id) })); };
-  const moveCat = (i, d) => { setDirty(true); setM((x) => { const c = [...x.categories]; const [it] = c.splice(i, 1); c.splice(i + d, 0, it); return { ...x, categories: c }; }); };
+  const move = (key, i, d) => { setDirty(true); setM((x) => { const c = [...x[key]]; const [it] = c.splice(i, 1); c.splice(i + d, 0, it); return { ...x, [key]: c }; }); };
   const save = async () => {
     setSaving(true);
     try { await api('/staff/menu', { method: 'PUT', body: { menu: m } }); setDirty(false); await reloadConfig(); toast('Меню сохранено — приложение обновится автоматически', 'ok'); }
@@ -274,6 +288,22 @@ export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
   };
   const oldIds = new Set(INGREDIENTS.map((i) => i.id));
   const catName = m.categories.find((c) => c.id === cat)?.name;
+  const pcatName = m.productCats.find((c) => c.id === pcat)?.name;
+  // Ингредиент удаляется насовсем: из конструктора, меню и рецептов. В списке он остаётся «пустым местом» —
+  // по порядку ингредиентов кодируются ссылки на рецепты.
+  const delIng = (i) => {
+    if (!window.confirm(`Удалить «${i.name}» насовсем? Он пропадёт из конструктора и бургеров меню.`)) return;
+    if (oldIds.has(i.id)) {
+      edit('ingredients', i.id, { deleted: true, hidden: true });
+      setM((x) => ({ ...x, products: x.products.map((p) => (p.keys ? { ...p, keys: p.keys.filter((k) => k.split(':').pop() !== i.id) } : p)) }));
+    } else remove('ingredients', i.id);
+  };
+  const delProduct = (p) => { if (window.confirm(`Удалить «${p.name}» из меню насовсем?`)) { remove('products', p.id); setOpen(null); } };
+  const delPcat = (c) => {
+    if (m.products.some((p) => p.cat === c.id)) return toast('В разделе есть позиции — перенесите или удалите их', 'err');
+    if (window.confirm(`Удалить раздел «${c.name}»?`)) remove('productCats', c.id);
+  };
+  const productsIn = m.products.filter((p) => p.cat === pcat);
 
   return (
     <>
@@ -281,22 +311,93 @@ export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
         <SaveActions dirty={dirty} saving={saving} onSave={save} onReset={() => { setM(snapshot()); setDirty(false); }} />
       </PageHead>
       <div className="st-toolbar">
-        <Seg value={tab} onChange={setTab} options={[['ingredients', 'Ингредиенты'], ['categories', 'Категории'], ['extras', 'Допы'], ['party', 'Party Burger']]} />
+        <Seg value={tab} onChange={setTab} options={[['products', 'Меню'], ['pcats', 'Разделы меню'], ['ingredients', 'Конструктор'], ['categories', 'Категории конструктора']]} />
       </div>
+
+      {tab === 'products' && (
+        <>
+          <div className="chips cat-row">{m.productCats.map((c) => <button key={c.id} className={`chip sm ${pcat === c.id ? 'active' : ''}`} onClick={() => setPcat(c.id)}><Icon name={c.icon} />{c.name}<em className="cnt-mini">{m.products.filter((p) => p.cat === c.id).length}</em></button>)}</div>
+          <div className="pe-list">
+            {productsIn.map((p) => (
+              <div key={p.id} className={`pe-row ${p.hidden ? 'off' : ''} ${open === p.id ? 'open' : ''}`}>
+                <div className="pe-head" onClick={() => setOpen(open === p.id ? null : p.id)}>
+                  <span className="pe-art"><ProductArt p={p} size={52} /></span>
+                  <span className="pe-t"><b>{p.name}{p.hit && <em className="pill hit">хит</em>}{p.spicy && <em className="pill">🌶</em>}{p.hidden && <em className="pill">скрыто</em>}</b><small>{fmtPrice(p.price)}{p.note ? ` · ${p.note}` : ''}</small></span>
+                  <Icon name="expand_more" className={open === p.id ? 'rot' : ''} />
+                </div>
+                {open === p.id && (
+                  <div className="pe-body">
+                    <div className="fld-grid">
+                      <Field label="Название"><input className="in" value={p.name} onChange={(e) => edit('products', p.id, { name: e.target.value })} /></Field>
+                      <Field label="Название (узб.)"><input className="in" value={p.nameUz || ''} onChange={(e) => edit('products', p.id, { nameUz: e.target.value })} /></Field>
+                      <Field label="Описание" wide><input className="in" value={p.note || ''} onChange={(e) => edit('products', p.id, { note: e.target.value })} /></Field>
+                      <Field label="Описание (узб.)" wide><input className="in" value={p.noteUz || ''} onChange={(e) => edit('products', p.id, { noteUz: e.target.value })} /></Field>
+                      <Field label="Цена, сум"><Num value={p.price} step={500} onChange={(v) => edit('products', p.id, { price: v })} /></Field>
+                      {!p.keys?.length && <Field label="Вес, г"><Num value={p.w || 0} onChange={(v) => edit('products', p.id, { w: v })} /></Field>}
+                      {!p.keys?.length && <Field label="Ккал"><Num value={p.kcal || 0} onChange={(v) => edit('products', p.id, { kcal: v })} /></Field>}
+                      <Field label="Раздел"><select className="in" value={p.cat} onChange={(e) => edit('products', p.id, { cat: e.target.value })}>{m.productCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+                      {!p.keys?.length && p.cat !== 'hotdogs' && <Field label="Иконка"><div className="icon-pick"><Icon name={p.icon || 'restaurant'} /><select className="in sm" value={p.icon || 'restaurant'} onChange={(e) => edit('products', p.id, { icon: e.target.value })}>{PRODUCT_ICONS.map((x) => <option key={x} value={x}>{x}</option>)}</select></div></Field>}
+                    </div>
+                    {p.keys?.length > 0 && <p className="muted-t pe-keys"><Icon name="lunch_dining" /> Состав (сверху вниз): {p.keys.map(layerName).join(' · ')}. Вес и калории считаются по слоям.</p>}
+                    <div className="chk-row">
+                      <Check on={!!p.hit} onChange={(v) => edit('products', p.id, { hit: v })}>Хит продаж</Check>
+                      <Check on={!!p.spicy} onChange={(v) => edit('products', p.id, { spicy: v })}>Выбор «острый / не острый»</Check>
+                      <Check on={!p.hidden} onChange={(v) => edit('products', p.id, { hidden: !v })}>Показывать в меню</Check>
+                    </div>
+                    <div className="st-row"><button className="btn ghost sm danger-t" onClick={() => delProduct(p)}><Icon name="delete" />Удалить из меню</button></div>
+                  </div>
+                )}
+              </div>
+            ))}
+            {!productsIn.length && <p className="muted-t">В разделе пока нет позиций</p>}
+          </div>
+          <div className="st-under">
+            <button className="btn ghost sm" onClick={() => { const id = newId('pr', m.products); add('products', { id, cat: pcat, name: 'Новая позиция', note: '', price: 20000, w: 200, kcal: 300, icon: pcat === 'drinks' ? 'local_drink' : pcat === 'sauces' ? 'water_drop' : 'restaurant' }); setOpen(id); }}><Icon name="add" />Позиция в «{pcatName}»</button>
+            {pcat === 'burgers' && <button className="btn ghost sm" onClick={() => { const id = newId('pr', m.products); add('products', { id, cat: 'burgers', name: 'Новый бургер', note: '', price: 40000, keys: SIZE_PRESETS.find((x) => x.id === 'standard').layers, spicy: true }); setOpen(id); }}><Icon name="lunch_dining" />Бургер со стандартным составом</button>}
+          </div>
+        </>
+      )}
+
+      {tab === 'pcats' && (
+        <>
+          <div className="card tbl-card">
+            <table className="tbl">
+              <thead><tr><th>Порядок</th><th>Иконка</th><th>Название</th><th>Название (узб.)</th><th>Показывать</th><th /></tr></thead>
+              <tbody>
+                {m.productCats.map((c, i) => (
+                  <tr key={c.id}>
+                    <td className="nowrap">
+                      <button className="icon-btn xs" disabled={i === 0} onClick={() => move('productCats', i, -1)} aria-label="Выше"><Icon name="arrow_upward" /></button>
+                      <button className="icon-btn xs" disabled={i === m.productCats.length - 1} onClick={() => move('productCats', i, 1)} aria-label="Ниже"><Icon name="arrow_downward" /></button>
+                    </td>
+                    <td><IconPick value={c.icon} onChange={(v) => edit('productCats', c.id, { icon: v })} /></td>
+                    <td><input className="in sm" value={c.name} onChange={(e) => edit('productCats', c.id, { name: e.target.value })} /></td>
+                    <td><input className="in sm" value={c.nameUz || ''} onChange={(e) => edit('productCats', c.id, { nameUz: e.target.value })} /></td>
+                    <td><Switch on={!c.hidden} onChange={(v) => edit('productCats', c.id, { hidden: !v })} label="Показывать" /></td>
+                    <td><button className="icon-btn xs" onClick={() => delPcat(c)} aria-label="Удалить"><Icon name="delete" /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="st-under"><button className="btn ghost sm" onClick={() => add('productCats', { id: newId('cat', m.productCats), name: 'Новый раздел', icon: 'restaurant' })}><Icon name="add" />Раздел</button><p className="muted-t">«Хит продаж» — не раздел: отметьте позиции галочкой «Хит продаж», и они появятся на главной и отдельной вкладкой меню.</p></div>
+        </>
+      )}
 
       {tab === 'categories' && (
         <div className="card tbl-card">
           <table className="tbl">
-            <thead><tr><th>Порядок</th><th>Иконка</th><th>Название</th><th>Показывать</th></tr></thead>
+            <thead><tr><th>Порядок</th><th>Иконка</th><th>Название</th><th>Название (узб.)</th><th>Показывать</th></tr></thead>
             <tbody>
               {m.categories.map((c, i) => (
                 <tr key={c.id}>
                   <td className="nowrap">
-                    <button className="icon-btn xs" disabled={i === 0} onClick={() => moveCat(i, -1)} aria-label="Выше"><Icon name="arrow_upward" /></button>
-                    <button className="icon-btn xs" disabled={i === m.categories.length - 1} onClick={() => moveCat(i, 1)} aria-label="Ниже"><Icon name="arrow_downward" /></button>
+                    <button className="icon-btn xs" disabled={i === 0} onClick={() => move('categories', i, -1)} aria-label="Выше"><Icon name="arrow_upward" /></button>
+                    <button className="icon-btn xs" disabled={i === m.categories.length - 1} onClick={() => move('categories', i, 1)} aria-label="Ниже"><Icon name="arrow_downward" /></button>
                   </td>
                   <td><IconPick value={c.icon} onChange={(v) => edit('categories', c.id, { icon: v })} /></td>
                   <td><input className="in sm" value={c.name} onChange={(e) => edit('categories', c.id, { name: e.target.value })} /></td>
+                  <td><input className="in sm" value={c.nameUz || ''} onChange={(e) => edit('categories', c.id, { nameUz: e.target.value })} /></td>
                   <td><Switch on={!c.hidden} onChange={(v) => edit('categories', c.id, { hidden: !v })} label="Показывать" /></td>
                 </tr>
               ))}
@@ -310,19 +411,21 @@ export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
           <div className="chips cat-row">{m.categories.map((c) => <button key={c.id} className={`chip sm ${cat === c.id ? 'active' : ''}`} onClick={() => setCat(c.id)}><Icon name={c.icon} />{c.name}</button>)}</div>
           <div className="card tbl-card">
             <table className="tbl">
-              <thead><tr><th>Название</th><th>Цена, сум</th><th>Вес, г</th><th>Ккал</th><th>Высота, мм</th><th>Острота</th><th>Вид слоя</th><th>Цвет</th><th>В меню</th></tr></thead>
+              <thead><tr><th>Название</th><th>Узб.</th><th>Цена, сум</th><th>Вес, г</th><th>Ккал</th><th>Высота, мм</th><th>Острота</th><th>Вид слоя</th><th>Цвет</th><th>В меню</th><th /></tr></thead>
               <tbody>
-                {m.ingredients.filter((i) => i.cat === cat).map((i) => (
+                {m.ingredients.filter((i) => i.cat === cat && !i.deleted).map((i) => (
                   <tr key={i.id} className={i.hidden ? 'muted-row' : ''}>
                     <td><input className="in sm" value={i.name} onChange={(e) => edit('ingredients', i.id, { name: e.target.value })} /></td>
+                    <td><input className="in sm" value={i.nameUz || ''} onChange={(e) => edit('ingredients', i.id, { nameUz: e.target.value })} /></td>
                     <td><Num className="sm w-m" value={i.price} step={500} onChange={(v) => edit('ingredients', i.id, { price: v })} /></td>
                     <td><Num className="sm w-s" value={i.w} onChange={(v) => edit('ingredients', i.id, { w: v })} /></td>
                     <td><Num className="sm w-s" value={i.kcal} onChange={(v) => edit('ingredients', i.id, { kcal: v })} /></td>
                     <td><Num className="sm w-s" value={i.h} min={1} onChange={(v) => edit('ingredients', i.id, { h: v })} /></td>
                     <td><Num className="sm w-xs" value={i.hot || 0} onChange={(v) => edit('ingredients', i.id, { hot: v })} /></td>
-                    <td>{oldIds.has(i.id) ? <span className="muted">{VIS_OPTIONS[i.vis] || i.vis}</span> : <select className="in sm" value={i.vis} onChange={(e) => edit('ingredients', i.id, { vis: e.target.value })}>{Object.entries(VIS_OPTIONS).map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select>}</td>
+                    <td>{oldIds.has(i.id) ? <span className="muted">{VIS_OPTIONS[i.vis] || i.vis}</span> : <select className="in sm" value={i.vis} onChange={(e) => edit('ingredients', i.id, { vis: e.target.value })}>{Object.entries(VIS_OPTIONS).map(([k, tt]) => <option key={k} value={k}>{tt}</option>)}</select>}</td>
                     <td><input className="color" type="color" value={i.c} onChange={(e) => edit('ingredients', i.id, { c: e.target.value })} aria-label="Цвет слоя" /></td>
-                    <td>{oldIds.has(i.id) ? <Switch on={!i.hidden} onChange={(v) => edit('ingredients', i.id, { hidden: !v })} label="В меню" /> : <button className="icon-btn xs" onClick={() => remove('ingredients', i.id)} aria-label="Удалить"><Icon name="delete" /></button>}</td>
+                    <td><Switch on={!i.hidden} onChange={(v) => edit('ingredients', i.id, { hidden: !v })} label="В меню" /></td>
+                    <td><button className="icon-btn xs" onClick={() => delIng(i)} aria-label="Удалить" title="Удалить насовсем"><Icon name="delete" /></button></td>
                   </tr>
                 ))}
               </tbody>
@@ -330,56 +433,114 @@ export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
           </div>
           <div className="st-under">
             <button className="btn ghost sm" onClick={() => add('ingredients', { id: newId('ing', m.ingredients), cat, name: 'Новый ингредиент', price: 3000, w: 20, kcal: 50, h: 4, vis: cat === 'bun' ? 'bun' : cat === 'meat' ? 'patty' : cat === 'cheese' ? 'cheese' : cat === 'sauce' ? 'sauce' : 'lettuce', c: '#C98A3E', c2: '#E8B55C' })}><Icon name="add" />Ингредиент в «{catName}»</button>
-            <p className="muted-t">Сохранённые ингредиенты не удаляются, а скрываются: на них ссылаются рецепты. Закончился на время — используйте стоп-лист.</p>
+            <p className="muted-t">Закончился на время — выключите в стоп-листе или переключателем «В меню». Корзина удаляет ингредиент насовсем.</p>
           </div>
         </>
       )}
+    </>
+  );
+}
 
-      {tab === 'extras' && (
-        <>
-          <div className="card tbl-card">
-            <table className="tbl">
-              <thead><tr><th>Иконка</th><th>Название</th><th>Описание</th><th>Цена, сум</th><th>В меню</th><th /></tr></thead>
-              <tbody>
-                {m.extras.map((u) => (
-                  <tr key={u.id} className={u.hidden ? 'muted-row' : ''}>
-                    <td><IconPick value={u.icon || 'restaurant'} onChange={(v) => edit('extras', u.id, { icon: v })} /></td>
-                    <td><input className="in sm" value={u.name} onChange={(e) => edit('extras', u.id, { name: e.target.value })} /></td>
-                    <td><input className="in sm" value={u.note} onChange={(e) => edit('extras', u.id, { note: e.target.value })} /></td>
-                    <td><Num className="sm w-m" value={u.price} step={500} onChange={(v) => edit('extras', u.id, { price: v })} /></td>
-                    <td><Switch on={!u.hidden} onChange={(v) => edit('extras', u.id, { hidden: !v })} label="В меню" /></td>
-                    <td><button className="icon-btn xs" onClick={() => remove('extras', u.id)} aria-label="Удалить"><Icon name="delete" /></button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="st-under"><button className="btn ghost sm" onClick={() => add('extras', { id: newId('up_', m.extras), name: 'Новая позиция', note: '', price: 10000, icon: 'restaurant', w: 0, kcal: 0 })}><Icon name="add" />Позиция</button></div>
-        </>
-      )}
+// ── Промокоды ──
+const emptyPromo = () => ({ code: '', type: 'percent', value: 10, minOrder: 0, maxDiscount: 0, maxUses: 0, perUser: 1, firstOrder: false, expiresAt: null, active: true, note: '' });
+const dateIn = (ts) => (ts ? new Date(ts - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) : '');
 
-      {tab === 'party' && (
-        <>
-          <div className="card tbl-card">
-            <table className="tbl">
-              <thead><tr><th>Гостей</th><th>Вес, г</th><th>Длина, см</th><th>Цена, сум</th><th>В меню</th><th /></tr></thead>
-              <tbody>
-                {m.party.map((p) => (
-                  <tr key={p.id} className={p.hidden ? 'muted-row' : ''}>
-                    <td><Num className="sm w-s" value={p.people} min={2} onChange={(v) => edit('party', p.id, { people: v })} /></td>
-                    <td><Num className="sm w-m" value={p.weight} onChange={(v) => edit('party', p.id, { weight: v })} /></td>
-                    <td><Num className="sm w-s" value={p.len} onChange={(v) => edit('party', p.id, { len: v })} /></td>
-                    <td><Num className="sm w-m" value={p.price} step={1000} onChange={(v) => edit('party', p.id, { price: v })} /></td>
-                    <td><Switch on={!p.hidden} onChange={(v) => edit('party', p.id, { hidden: !v })} label="В меню" /></td>
-                    <td><button className="icon-btn xs" onClick={() => remove('party', p.id)} aria-label="Удалить"><Icon name="delete" /></button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+export function Promos({ api, toast }) {
+  const [list, setList] = useState([]);
+  const [f, setF] = useState(null);
+  const load = () => api('/staff/promos').then((d) => setList(d.promos)).catch((e) => toast(e.message, 'err'));
+  useEffect(() => { load(); }, []);
+  const save = async () => {
+    try { await api('/staff/promos', { method: 'POST', body: f }); toast(`Промокод ${f.code.toUpperCase()} сохранён`, 'ok'); setF(null); load(); }
+    catch (e) { toast(e.message, 'err'); }
+  };
+  const toggle = async (p) => {
+    try { await api('/staff/promos', { method: 'POST', body: { ...p, original: p.code, active: !p.active } }); load(); }
+    catch (e) { toast(e.message, 'err'); }
+  };
+  const del = async (p) => {
+    if (!window.confirm(`Удалить промокод ${p.code}? Статистика по нему останется в отчётах.`)) return;
+    try { await api(`/staff/promos/${encodeURIComponent(p.code)}`, { method: 'DELETE' }); toast('Промокод удалён', 'ok'); load(); }
+    catch (e) { toast(e.message, 'err'); }
+  };
+  const describe = (p) => [
+    p.type === 'percent' ? `−${p.value}%${p.maxDiscount ? ` (не больше ${fmtPrice(p.maxDiscount)})` : ''}` : `−${fmtPrice(p.value)}`,
+    p.minOrder ? `от ${fmtPrice(p.minOrder)}` : '', p.firstOrder ? 'только первый заказ' : '',
+    p.perUser ? `${p.perUser} раз на клиента` : '', p.maxUses ? `всего ${p.maxUses}` : '',
+    p.expiresAt ? `до ${new Date(p.expiresAt).toLocaleDateString('ru-RU')}` : '',
+  ].filter(Boolean).join(' · ');
+  return (
+    <>
+      <PageHead title="Промокоды" sub="Скидка действует на товары, без доставки. Использование видно здесь и в «Отчётах»">
+        <button className="btn primary sm" onClick={() => setF(emptyPromo())}><Icon name="add" />Промокод</button>
+      </PageHead>
+      {f && (
+        <Card icon="sell" title={f.original ? `Промокод ${f.original}` : 'Новый промокод'} className="promo-form">
+          <div className="fld-grid">
+            <Field label="Код" hint="Латиница и цифры, например BURGER10"><input className="in code-up" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, '') })} maxLength={20} /></Field>
+            <Field label="Тип скидки"><Seg value={f.type} onChange={(v) => setF({ ...f, type: v })} options={[['percent', '%'], ['fixed', 'сум']]} /></Field>
+            <Field label={f.type === 'percent' ? 'Скидка, %' : 'Скидка, сум'}><Num value={f.value} step={f.type === 'percent' ? 1 : 1000} onChange={(v) => setF({ ...f, value: v })} /></Field>
+            {f.type === 'percent' && <Field label="Скидка не больше, сум" hint="0 — без ограничения"><Num value={f.maxDiscount} step={1000} onChange={(v) => setF({ ...f, maxDiscount: v })} /></Field>}
+            <Field label="Заказ от, сум"><Num value={f.minOrder} step={1000} onChange={(v) => setF({ ...f, minOrder: v })} /></Field>
+            <Field label="Раз на одного клиента" hint="0 — сколько угодно"><Num value={f.perUser} onChange={(v) => setF({ ...f, perUser: v })} /></Field>
+            <Field label="Всего использований" hint="0 — без ограничения"><Num value={f.maxUses} onChange={(v) => setF({ ...f, maxUses: v })} /></Field>
+            <Field label="Действует до" hint="Пусто — бессрочно"><input className="in" type="date" value={dateIn(f.expiresAt)} onChange={(e) => setF({ ...f, expiresAt: e.target.value ? new Date(`${e.target.value}T23:59:59`).getTime() : null })} /></Field>
+            <Field label="Заметка" wide><input className="in" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="Например: для блогера, листовки у метро" /></Field>
           </div>
-          <div className="st-under"><button className="btn ghost sm" onClick={() => add('party', { id: newId('p', m.party), people: 8, weight: 3600, price: 420000, len: 80 })}><Icon name="add" />Размер</button></div>
-        </>
+          <div className="chk-row">
+            <Check on={f.firstOrder} onChange={(v) => setF({ ...f, firstOrder: v })}>Только на первый заказ</Check>
+            <Check on={f.active} onChange={(v) => setF({ ...f, active: v })}>Активен</Check>
+          </div>
+          <div className="st-row"><button className="btn primary sm" onClick={save} disabled={f.code.length < 3 || !f.value}><Icon name="check" />Сохранить</button><button className="btn ghost sm" onClick={() => setF(null)}>Отмена</button></div>
+        </Card>
       )}
+      <div className="promo-list">
+        {list.map((p) => (
+          <div key={p.code} className={`promo-row ${p.active ? '' : 'off'}`}>
+            <span className="promo-code">{p.code}</span>
+            <span className="promo-t"><b>{describe(p)}</b><small>{p.note ? `${p.note} · ` : ''}использован {p.uses} раз · скидок на {fmtPrice(p.discountSum)}</small></span>
+            <span className="promo-act">
+              <Switch on={p.active} onChange={() => toggle(p)} label="Активен" />
+              <button className="icon-btn sm" onClick={() => setF({ ...emptyPromo(), ...p, original: p.code })} aria-label="Изменить"><Icon name="edit" /></button>
+              <button className="icon-btn sm" onClick={() => del(p)} aria-label="Удалить"><Icon name="delete" /></button>
+            </span>
+          </div>
+        ))}
+        {!list.length && !f && <div className="desk-empty">Промокодов пока нет. Нажмите «Промокод», чтобы создать первый</div>}
+      </div>
+    </>
+  );
+}
+
+// ── Код для повара: 6 цифр, обновляется каждую минуту ──
+export function CookCode({ api, toast }) {
+  const [c, setC] = useState(null);
+  const [left, setLeft] = useState(0);
+  const load = () => api('/staff/cook-code').then((d) => { setC(d.code); setLeft(Math.ceil(d.expiresIn / 1000)); }).catch((e) => toast(e.message, 'err'));
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const tm = setInterval(() => setLeft((s) => { if (s <= 1) { load(); return 60; } return s - 1; }), 1000);
+    return () => clearInterval(tm);
+  }, []);
+  const reset = async () => {
+    if (!window.confirm('Завершить смены всех поваров? Им придётся войти заново по новому коду.')) return;
+    try { await api('/staff/cook-reset', { method: 'POST', body: {} }); toast('Все повара вышли — для входа нужен новый код', 'ok'); }
+    catch (e) { toast(e.message, 'err'); }
+  };
+  const url = `${location.origin}/staff?cook`;
+  return (
+    <>
+      <PageHead title="Код для повара" sub="Повар открывает кассу на сайте, выбирает «Повар» и вводит этот код. Код меняется каждую минуту" />
+      <div className="cook-code card">
+        <div className="cc-digits" aria-live="polite">{(c || '······').split('').map((d, i) => <span key={i}>{d}</span>)}</div>
+        <div className="cc-ring" style={{ '--p': `${(left / 60) * 100}%` }}><b>{left}</b><small>сек</small></div>
+        <p className="muted-t">Адрес для повара: <code>{url}</code></p>
+        <div className="st-row">
+          <button className="btn ghost sm" onClick={() => { navigator.clipboard?.writeText(url); toast('Адрес скопирован', 'ok'); }}><Icon name="link" />Скопировать адрес</button>
+          <button className="btn ghost sm danger-t" onClick={reset}><Icon name="logout" />Завершить смены всех поваров</button>
+        </div>
+        <p className="muted-t">Повар видит только экран «Кухня»: заказы после приёма кассой, слои сверху вниз, острота, комментарии. Вход действует одну смену (16 часов).</p>
+      </div>
     </>
   );
 }
@@ -434,8 +595,18 @@ export function Settings({ api, toast, reloadConfig, cfgRev }) {
             <Check on={d.modes.delivery} onChange={(v) => set('modes.delivery', v)}>Доставка</Check>
             <Check on={d.modes.pickup} onChange={(v) => set('modes.pickup', v)}>Самовывоз</Check>
             <Check on={d.modes.hall} onChange={(v) => set('modes.hall', v)}>В зале</Check>
-            <Check on={d.partyCustom} onChange={(v) => set('partyCustom', v)}>Party Burger любого размера</Check>
           </div>
+        </Card>
+
+        <Card icon="redeem" title="Реферальная программа и котлетки" sub="Бонусы начисляются обоим после первого выполненного заказа приглашённого друга">
+          <div className="chk-row"><Check on={d.referral.enabled} onChange={(v) => set('referral.enabled', v)}>Программа включена</Check></div>
+          <div className="fld-grid mt">
+            <Field label="Пригласившему, котлеток"><Num value={d.referral.inviterBonus} onChange={(v) => set('referral.inviterBonus', v)} /></Field>
+            <Field label="Приглашённому, котлеток"><Num value={d.referral.inviteeBonus} onChange={(v) => set('referral.inviteeBonus', v)} /></Field>
+            <Field label="1 котлетка = сум"><Num value={d.referral.rate} step={100} min={1} onChange={(v) => set('referral.rate', v)} /></Field>
+            <Field label="Оплата котлетками, до % заказа"><Num value={d.referral.maxPercent} onChange={(v) => set('referral.maxPercent', v)} /></Field>
+          </div>
+          <p className="muted-t mt">Сейчас пригласивший получает {d.referral.inviterBonus} котлеток = {fmtPrice((d.referral.inviterBonus || 0) * (d.referral.rate || 0))}. При отмене заказа списанные котлетки возвращаются клиенту.</p>
         </Card>
 
         <Card icon="timer" title="Время, минуты">
@@ -545,7 +716,7 @@ export function Delivery({ api, toast, reloadConfig, cfgRev }) {
 }
 
 // ── Сотрудники из Telegram: добавление по ID или @username, имя и никнейм подтягиваются сами ──
-const ROLE_OPTS = [['admin', 'Администратор'], ['cashier', 'Кассир']];
+const ROLE_OPTS = [['admin', 'Администратор'], ['cashier', 'Кассир'], ['cook', 'Повар']];
 
 function TgStaff({ api, toast, user }) {
   const [list, setList] = useState([]);
@@ -594,7 +765,7 @@ function TgStaff({ api, toast, user }) {
                 <small>{x.username ? `@${x.username} · ` : ''}ID {x.tgId}</small>
               </span>
               <span className="tg-ctl">
-                {locked ? <span className="muted-t">{x.role === 'admin' ? 'Администратор' : 'Кассир'}</span>
+                {locked ? <span className="muted-t">{ROLE_OPTS.find(([k]) => k === x.role)?.[1]}</span>
                   : <select className="in sm" value={x.role} onChange={(e) => upd(x, { role: e.target.value }, 'Роль изменена')}>{ROLE_OPTS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select>}
                 {!locked && <Switch on={x.active} onChange={(v) => upd(x, { active: v }, v ? 'Доступ включён' : 'Доступ отключён')} label="Доступ" />}
                 {!locked && <button className="icon-btn sm" onClick={() => del(x)} aria-label="Удалить" title="Удалить"><Icon name="delete" /></button>}

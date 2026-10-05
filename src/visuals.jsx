@@ -430,25 +430,32 @@ export function BurgerStack({ layers, maxH = 360, maxW = 300, maxScale = 1.25, a
   );
 }
 
-// Длинный party-бургер (вид сбоку)
-export function PartyBurgerArt({ len = 50, height = 120 }) {
-  const w = Math.min(640, 160 + len * 3);
+// Хот-дог (вид сбоку): булочка, сосиска, соус волной
+export function HotdogArt({ w = 120, sauce = '#F5A20F', spicy = false }) {
   return (
-    <svg viewBox={`0 0 ${w} 130`} width="100%" height={height} aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+    <svg viewBox="0 0 160 80" width={w} height={w / 2} aria-hidden="true">
       <defs>
-        <linearGradient id="pb-top" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#F0B45A" /><stop offset="1" stopColor="#C9782A" /></linearGradient>
-        <linearGradient id="pb-meat" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#7A4530" /><stop offset="1" stopColor="#4E2A1B" /></linearGradient>
+        <linearGradient id="hd-bun" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#F2B865" /><stop offset="1" stopColor="#C9782A" /></linearGradient>
+        <linearGradient id="hd-saus" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#C2502E" /><stop offset="1" stopColor="#8E2F17" /></linearGradient>
       </defs>
-      <rect x="10" y="100" width={w - 20} height="22" rx="11" fill="url(#pb-top)" />
-      <rect x="12" y="84" width={w - 24} height="18" rx="8" fill="url(#pb-meat)" />
-      <path d={`M8 84 H${w - 8} L${w - 14} 90 H${w * 0.7} l-6 12 -6 -12 H${w * 0.35} l-7 14 -7 -14 H14 Z`} fill="#F5A20F" />
-      <path d={`M4 78 ${Array.from({ length: Math.ceil(w / 18) }, (_, i) => `q9 ${i % 2 ? 8 : -6} 18 0`).join(' ')}`} stroke="#5DB445" strokeWidth="9" fill="none" strokeLinecap="round" />
-      {Array.from({ length: Math.ceil((w - 40) / 46) }, (_, i) => <rect key={i} x={22 + i * 46} y="66" width="40" height="9" rx="4" fill="#E0352B" />)}
-      <path d={`M10 66 C10 18 40 8 ${w / 2} 8 C${w - 40} 8 ${w - 10} 18 ${w - 10} 66 Z`} fill="url(#pb-top)" />
-      {Array.from({ length: Math.ceil(w / 22) }, (_, i) => <ellipse key={i} cx={24 + i * 21} cy={26 + (i % 3) * 9} rx="4" ry="2" fill="#F7E7C4" transform={`rotate(${(i % 5) * 15 - 30} ${24 + i * 21} ${26 + (i % 3) * 9})`} />)}
-      {len >= 70 && Array.from({ length: Math.floor(len / 25) }, (_, i) => (
-        <line key={'f' + i} x1={(w / (Math.floor(len / 25) + 1)) * (i + 1)} x2={(w / (Math.floor(len / 25) + 1)) * (i + 1)} y1="0" y2="4" stroke="#FF5A00" strokeWidth="3" />
-      ))}
+      <path d="M14 44 Q14 70 40 70 L120 70 Q146 70 146 44 Z" fill="url(#hd-bun)" />
+      <rect x="6" y="30" width="148" height="22" rx="11" fill="url(#hd-saus)" />
+      <path d="M14 36 q8 -6 16 0 t16 0 t16 0 t16 0 t16 0 t16 0 t16 0 t16 0" stroke={spicy ? '#E0352B' : sauce} strokeWidth="4" fill="none" strokeLinecap="round" />
+      <path d="M18 46 Q18 30 40 28 L120 28 Q142 30 142 46" fill="none" stroke="#E8A34E" strokeWidth="3" opacity=".7" />
+      <ellipse cx="52" cy="62" rx="16" ry="3" fill="#fff" opacity=".22" />
     </svg>
   );
+}
+
+// Картинка товара меню: бургер по слоям, хот-дог или иконка в кружке
+export function ProductArt({ p, size = 120 }) {
+  if (p?.keys?.length) return <BurgerStack layers={toLayersCached(p.keys)} maxH={size} maxW={size} maxScale={0.6} animate={false} />;
+  if (p?.cat === 'hotdogs') return <HotdogArt w={size} spicy={/чили|chili/i.test(p.name || '')} />;
+  return <span className="prod-ico" style={{ width: size * 0.62, height: size * 0.62 }}><span className="ms fill" style={{ fontSize: size * 0.32 }}>{p?.icon || (p?.cat === 'healthy' ? 'eco' : p?.cat === 'drinks' ? 'local_drink' : p?.cat === 'sauces' ? 'water_drop' : 'restaurant')}</span></span>;
+}
+const keyCache = new Map();
+function toLayersCached(keys) {
+  const k = keys.join('|');
+  if (!keyCache.has(k)) keyCache.set(k, keys.map((key, i) => ({ uid: `p${i}-${key}`, key, hidden: false })));
+  return keyCache.get(k);
 }

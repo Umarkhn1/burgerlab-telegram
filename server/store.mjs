@@ -1,6 +1,7 @@
 // Простое файловое хранилище: заказы (data/orders.json) и настройки заведения (data/settings.json).
 // Для продакшена замените на PostgreSQL / MongoDB — интерфейс функций останется тем же.
 import fs from 'fs';
+import crypto from 'crypto';
 import path from 'path';
 import { defaultMenu, withDefaults, applyMenu, applySettings, applyStop } from '../src/data.js';
 import { withZoneNames } from '../src/calc.js';
@@ -11,12 +12,14 @@ const CONF_FILE = path.join(DIR, 'settings.json');
 const FIRST_ID = 1001;
 const AUDIT_MAX = 2000;
 
-// users — клиенты Telegram: номер телефона, которым поделились в боте
+// users — клиенты Telegram: телефон и геолокация из бота, язык, котлетки (бонусы) и кто пригласил
 let db = { seq: FIRST_ID - 1, orders: [], users: {} };
 // menu — меню (категории, ингредиенты, допы, party), settings — параметры заведения,
 // stop — стоп-лист { id: true }, staff — сотрудники с паролем (касса в браузере),
-// tgStaff — сотрудники из Telegram (вход в панель внутри Mini App), audit — журнал изменений настроек
-let conf = { menu: null, settings: null, stop: {}, staff: [], tgStaff: [], audit: [] };
+// tgStaff — сотрудники из Telegram (вход в панель внутри Mini App), promos — промокоды,
+// cookSecret / cookVer — код входа повара (меняется каждую минуту) и номер «смены» (сброс всех входов поваров),
+// audit — журнал изменений настроек
+let conf = { menu: null, settings: null, stop: {}, staff: [], tgStaff: [], promos: [], cookSecret: '', cookVer: 1, audit: [] };
 // Номер ревизии: растёт при любом изменении, по нему касса понимает, что пора обновиться
 let rev = 1;
 let confRev = 1;
@@ -31,8 +34,13 @@ export function loadStore() {
   try { conf = { ...conf, ...(readJson(CONF_FILE) || {}) }; } catch (e) { console.error('Не удалось прочитать', CONF_FILE, e.message); process.exit(1); }
   db.users ||= {};
   conf.tgStaff ||= [];
+  conf.promos ||= [];
+  conf.cookSecret ||= crypto.randomBytes(20).toString('hex');
+  conf.cookVer ||= 1;
   if (!conf.menu) conf.menu = defaultMenu();
   migrateMenu(conf.menu);
+  // Статуса «Передан курьеру» больше нет — такие заказы считаем «Доставляется»
+  for (const o of db.orders) if (o.status === 'courier') { o.status = 'delivering'; o.statusAt = { ...o.statusAt, delivering: o.statusAt?.delivering || o.statusAt?.courier }; }
   conf.settings = withDefaults(conf.settings);
   // Старые названия («Зона 1 — до 3 км») → по диапазону («до 3 км»)
   conf.settings.delivery.zones = withZoneNames([...conf.settings.delivery.zones].sort((a, b) => a.maxKm - b.maxKm));
@@ -42,15 +50,32 @@ export function loadStore() {
   saveConf();
 }
 
-// Раньше у категорий и допов были эмодзи — заменяем их иконками из меню по умолчанию
+// Старые форматы меню: эмодзи вместо иконок, «допы» и Party Burger вместо меню товаров
 function migrateMenu(menu) {
   const def = defaultMenu();
   const isIcon = (v) => /^[a-z0-9_]+$/.test(v || '');
-  for (const c of menu.categories) if (!isIcon(c.icon)) c.icon = def.categories.find((d) => d.id === c.id)?.icon || 'restaurant';
-  for (const u of menu.extras) {
-    if (!isIcon(u.icon)) u.icon = def.extras.find((d) => d.id === u.id)?.icon || 'restaurant';
-    delete u.emoji;
+  for (const c of menu.categories) {
+    if (!isIcon(c.icon)) c.icon = def.categories.find((d) => d.id === c.id)?.icon || 'restaurant';
+    c.nameUz ||= def.categories.find((d) => d.id === c.id)?.nameUz;
   }
+  for (const i of menu.ingredients) {
+    const d = def.ingredients.find((x) => x.id === i.id);
+    if (d) { i.nameUz ||= d.nameUz; i.shortUz ||= d.shortUz; }
+  }
+  if (!menu.products) {
+    // Допы, которые администратор уже настроил, переносим в меню с их ценами
+    const CAT = { up_fries: 'snacks', up_drink: 'drinks', up_dip: 'sauces', up_dessert: 'desserts' };
+    menu.products = def.products.map((p) => {
+      const old = (menu.extras || []).find((u) => u.id === p.id);
+      return old ? { ...p, name: old.name, note: old.note, price: old.price, hidden: !!old.hidden } : p;
+    });
+    for (const u of menu.extras || []) {
+      if (!menu.products.find((p) => p.id === u.id)) menu.products.push({ id: u.id, cat: CAT[u.id] || 'snacks', name: u.name, note: u.note || '', price: u.price, icon: isIcon(u.icon) ? u.icon : 'restaurant', w: u.w || 0, kcal: u.kcal || 0, hidden: !!u.hidden });
+    }
+  }
+  menu.productCats ||= def.productCats;
+  delete menu.extras;
+  delete menu.party;
 }
 
 function writer(file) {
@@ -229,4 +254,65 @@ export function findUserByUsername(username) {
   if (!u) return null;
   for (const [id, x] of Object.entries(db.users)) if ((x.username || '').toLowerCase() === u) return { id: Number(id), ...x };
   return null;
+}
+
+// ── Котлетки: бонусы клиента (1 котлетка = settings.referral.rate сум) ──
+export const cutletsOf = (userId) => Math.max(0, Math.floor(db.users[userId]?.cutlets || 0));
+// delta > 0 — начисление, < 0 — списание. История — последние 50 операций.
+export function addCutlets(userId, delta, reason, orderId) {
+  if (!userId || !delta) return cutletsOf(userId);
+  const u = (db.users[userId] ||= {});
+  u.cutlets = Math.max(0, Math.floor((u.cutlets || 0) + delta));
+  u.cutletLog = [{ at: Date.now(), delta, reason, orderId: orderId || null }, ...(u.cutletLog || [])].slice(0, 50);
+  save();
+  return u.cutlets;
+}
+// Сколько друзей пригласил клиент и сколько из них уже сделали первый заказ
+export function referralStats(userId) {
+  let invited = 0, rewarded = 0;
+  for (const u of Object.values(db.users)) if (u.referredBy === userId) { invited++; if (u.refRewarded) rewarded++; }
+  return { invited, rewarded };
+}
+export const hasOrders = (userId) => db.orders.some((o) => o.userId === userId);
+export const doneOrdersOf = (userId) => db.orders.filter((o) => o.userId === userId && o.status === 'done').length;
+
+// ── Промокоды ──
+export const promoList = () => conf.promos;
+export const findPromo = (code) => conf.promos.find((x) => x.code === String(code || '').trim().toUpperCase()) || null;
+// Сколько раз промокод применён (отменённые заказы не считаются); userId — только этим клиентом
+export const promoUses = (code, userId) => db.orders.filter((o) => o.promo?.code === code && o.status !== 'cancelled' && (!userId || o.userId === userId)).length;
+export function savePromo(promo, by, action) {
+  const i = conf.promos.findIndex((x) => x.code === promo.code);
+  if (i >= 0) conf.promos[i] = promo;
+  else conf.promos.push(promo);
+  audit(by, action, promo.code);
+  return saveConf();
+}
+export function removePromo(code, by) {
+  const p = findPromo(code);
+  if (!p) return null;
+  conf.promos = conf.promos.filter((x) => x.code !== p.code);
+  audit(by, 'Промокод удалён', p.code);
+  saveConf();
+  return p;
+}
+
+// ── Повара: код входа меняется каждую минуту, «смена» сбрасывает все входы поваров ──
+export const cookSecret = () => conf.cookSecret;
+export const cookVer = () => conf.cookVer;
+export function resetCookSessions(by) {
+  conf.cookVer = (conf.cookVer || 1) + 1;
+  audit(by, 'Все входы поваров завершены', `смена ${conf.cookVer}`);
+  return saveConf();
+}
+
+// Приглашение: засчитываем, только если клиент новый (ещё не заказывал и никем не приглашён),
+// а пригласивший — реальный пользователь бота и не он сам
+export function applyReferral(userId, refId) {
+  refId = Number(refId);
+  if (!refId || refId === Number(userId) || !db.users[refId]) return false;
+  const u = db.users[userId];
+  if (u?.referredBy || hasOrders(userId)) return false;
+  saveUser(userId, { referredBy: refId, referredAt: Date.now() });
+  return true;
 }

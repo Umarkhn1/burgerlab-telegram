@@ -1,4 +1,5 @@
-import { ING, INGREDIENTS, UPSELL, PARTY, SETTINGS, STOP, STATUSES, FLOWS, MODE_TEXT } from './data.js';
+import { ING, INGREDIENTS, PROD, SETTINGS, STOP, STATUSES, FLOWS, MODE_TEXT } from './data.js';
+import { getLang, nm, t } from './i18n.js';
 
 let uidSeq = 1;
 export const uid = () => `L${Date.now().toString(36)}${(uidSeq++).toString(36)}`;
@@ -61,15 +62,20 @@ export function burgerType(weight) {
   if (weight < 800) return { id: 'big', label: 'Big', tone: 'plain' };
   if (weight < 1500) return { id: 'xl', label: 'XL', tone: 'warm' };
   if (weight < 3000) return { id: 'giant', label: 'Giant', tone: 'hot' };
-  return { id: 'party', label: 'Party / Monster', tone: 'fire' };
+  return { id: 'monster', label: 'Monster', tone: 'fire' };
 }
 
 const NB = '\u00a0';
-export const fmtPrice = (n) => `${Math.round(n).toLocaleString('ru-RU').replace(/\u00a0|\u202f/g, NB)}${NB}сум`;
+// Приблизительные значения (вес, калории, высота, время) клиенту показываем со знаком ≈
+export const approx = (s) => `≈${NB}${s}`;
+// Единицы на языке интерфейса (на сервере язык всегда русский)
+const U = { ru: { sum: 'сум', kg: 'кг', g: 'г', kcal: 'ккал', cm: 'см' }, uz: { sum: "so'm", kg: 'kg', g: 'g', kcal: 'kkal', cm: 'sm' } };
+const unit = (k) => (U[getLang()] || U.ru)[k];
+export const fmtPrice = (n) => `${Math.round(n).toLocaleString('ru-RU').replace(/\u00a0|\u202f/g, NB)}${NB}${unit('sum')}`;
 export const fmtWeight = (g) =>
-  g >= 1000 ? `${(g / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}${NB}кг` : `${Math.round(g)}${NB}г`;
-export const fmtKcal = (k) => `${Math.round(k).toLocaleString('ru-RU').replace(/\u00a0|\u202f/g, NB)}${NB}ккал`;
-export const fmtCm = (c) => `${c.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${NB}см`;
+  g >= 1000 ? `${(g / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}${NB}${unit('kg')}` : `${Math.round(g)}${NB}${unit('g')}`;
+export const fmtKcal = (k) => `${Math.round(k).toLocaleString('ru-RU').replace(/\u00a0|\u202f/g, NB)}${NB}${unit('kcal')}`;
+export const fmtCm = (c) => `${c.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${NB}${unit('cm')}`;
 
 export function plural(n, one, few, many) {
   const a = Math.abs(n) % 100, b = a % 10;
@@ -86,6 +92,12 @@ export function layerName(key) {
   if (role === 'bottom') return `${ing.name} — низ`;
   if (role === 'mid') return `${ing.name} — середина`;
   return ing.name;
+}
+// Название слоя на языке интерфейса (для клиента)
+export function layerLabel(key) {
+  const { ing, role } = parseKey(key);
+  if (!ing) return key;
+  return role ? `${nm(ing)} — ${t(role === 'top' ? 'верх' : role === 'bottom' ? 'низ' : 'середина')}` : nm(ing);
 }
 export function layerNameEn(key) {
   const { ing, role } = parseKey(key);
@@ -127,7 +139,7 @@ export function decodeRecipe(code) {
   try {
     const o = JSON.parse(decodeURIComponent(escape(atob(code))));
     if (!Array.isArray(o.k)) return null;
-    const keys = o.k.filter((k) => parseKey(k).ing);
+    const keys = o.k.filter((k) => parseKey(k).ing && !parseKey(k).ing.deleted);
     return { name: o.n || 'Бургер из ссылки', author: o.a || 'Друг', layers: toLayers(keys) };
   } catch { return null; }
 }
@@ -170,20 +182,29 @@ export function challengeProgress(s, id) {
 // ── Корзина: общая логика для приложения и сервера бота ──────────────
 // Доставка платная до порога SETTINGS.freeFrom; стоимость зависит от зоны.
 // Без зоны (ещё не выбрана) fee = 0 и feeFrom — минимальная цена доставки.
-export function cartTotals(cart, mode = 'delivery', zone = null) {
+// discount — скидка по промокоду, cutlets — сколько котлеток списать (сумма считается по курсу)
+export function cartTotals(cart, mode = 'delivery', zone = null, { discount = 0, cutlets = 0 } = {}) {
   const sub = cart.reduce((s, i) => s + i.unit * i.qty, 0);
   const paid = mode === 'delivery' && sub > 0 && sub < SETTINGS.freeFrom;
   const zones = SETTINGS.delivery.zones;
   const fee = paid && zone ? zone.fee : 0;
   const feeFrom = paid && !zone && zones.length ? Math.min(...zones.map((z) => z.fee)) : 0;
-  return { sub, fee, feeFrom, total: sub + fee, minLeft: Math.max(0, SETTINGS.minOrder - sub) };
+  const disc = Math.max(0, Math.min(discount, sub));
+  const cut = Math.min(cutletsSum(cutlets), sub - disc + fee);
+  return { sub, fee, feeFrom, discount: disc, cutlets: cut, total: sub - disc + fee - cut, minLeft: Math.max(0, SETTINGS.minOrder - sub) };
 }
 
-// Party Burger произвольного размера (та же формула на клиенте и сервере)
-export const partyOption = (people) => ({ id: 'custom', people, weight: people * 450, price: Math.round((people * 54000) / 1000) * 1000, len: Math.min(200, people * 10) });
+// Стоп-лист: позиция недоступна, если она в стоп-листе, скрыта или удалена из меню
+export const isStopped = (id) => !!STOP[id] || !!ING[id]?.hidden || !!ING[id]?.deleted;
 
-// Стоп-лист: позиция недоступна, если она в стоп-листе или скрыта из меню
-export const isStopped = (id) => !!STOP[id] || !!ING[id]?.hidden;
+// Позиция меню: старые позиции корзины «extra» — это тоже товары меню
+const prodOf = (it) => (it.kind === 'product' || it.kind === 'extra' ? PROD[it.id] : null);
+
+// Вес и калории товара: у бургеров из меню считаются по слоям, у остальных заданы в меню
+export function productInfo(p) {
+  if (p?.keys?.length) { const st = stats(toLayers(p.keys)); return { w: st.weight, kcal: st.kcal }; }
+  return { w: p?.w || 0, kcal: p?.kcal || 0 };
+}
 
 // Почему позиция корзины сейчас недоступна (пустой массив — всё в порядке)
 export function itemIssues(it) {
@@ -191,30 +212,40 @@ export function itemIssues(it) {
     const names = new Set();
     for (const k of it.keys) {
       const { ing } = parseKey(k);
-      if (!ing) names.add(k);
-      else if (isStopped(ing.id)) names.add(ing.name);
+      if (!ing || ing.deleted) names.add(ing ? nm(ing) : k);
+      else if (isStopped(ing.id)) names.add(nm(ing));
     }
-    return [...names].map((n) => `нет в наличии: ${n}`);
+    return [...names].map((n) => `${t('нет в наличии')}: ${n}`);
   }
-  if (it.kind === 'extra') {
-    const u = UPSELL.find((x) => x.id === it.id);
-    return !u || u.hidden || STOP[it.id] ? [`нет в наличии: ${it.name}`] : [];
+  if (it.kind === 'product' || it.kind === 'extra') {
+    const p = prodOf(it);
+    return !p || p.hidden || STOP[it.id] ? [`${t('нет в наличии')}: ${nm(p) || it.name}`] : [];
   }
-  if (it.kind === 'party') {
-    const p = PARTY.find((x) => x.people === it.people);
-    if (STOP.party || (p && (p.hidden || STOP[p.id]))) return ['Party Burger сейчас недоступен'];
-    return p || SETTINGS.partyCustom ? [] : ['Party Burger этого размера недоступен'];
-  }
-  return ['неизвестная позиция'];
+  return [t('позиция больше не продаётся')];
 }
 
 // Актуальная цена позиции по текущему меню
 export function itemUnit(it) {
   if (it.kind === 'burger') return stats(toLayers(it.keys)).total;
-  if (it.kind === 'extra') return UPSELL.find((x) => x.id === it.id)?.price ?? it.unit;
-  if (it.kind === 'party') return (PARTY.find((x) => x.people === it.people) || partyOption(it.people)).price;
+  if (it.kind === 'product' || it.kind === 'extra') return prodOf(it)?.price ?? it.unit;
   return it.unit;
 }
+
+// ── Скидки: промокод и котлетки ──
+// promo: { type: 'percent' | 'fixed', value, maxDiscount } — скидка только на товары, без доставки
+export function promoDiscount(promo, sub) {
+  if (!promo || sub <= 0) return 0;
+  let d = promo.type === 'percent' ? Math.round((sub * promo.value) / 100 / 100) * 100 : promo.value;
+  if (promo.maxDiscount > 0) d = Math.min(d, promo.maxDiscount);
+  return Math.max(0, Math.min(d, sub));
+}
+// Сколько котлеток можно списать: не больше баланса и не больше maxPercent % суммы к оплате
+export function cutletsMax(balance, payable) {
+  const R = SETTINGS.referral || {};
+  if (!R.enabled || !(R.rate > 0) || balance <= 0 || payable <= 0) return 0;
+  return Math.max(0, Math.min(Math.floor(balance), Math.floor((payable * (R.maxPercent ?? 50)) / 100 / R.rate)));
+}
+export const cutletsSum = (n) => Math.round(n * (SETTINGS.referral?.rate || 0));
 
 // ── Лимиты конструктора ──
 const catOf = (key) => {
@@ -223,22 +254,24 @@ const catOf = (key) => {
   return role && role !== 'mid' ? 'bunEnd' : ing.cat;
 };
 const CAT_NAMES = { bun: 'средних булочек', meat: 'котлет', cheese: 'слоёв сыра', veg: 'овощей', sauce: 'соусов', extra: 'добавок' };
+const catName = (c) => t(CAT_NAMES[c] || 'слоёв этой категории');
+const shortName = (ing) => nm(ing, 'short') || nm(ing);
 
 // Можно ли добавить ингредиент к текущему набору слоёв. Возвращает текст причины или null.
 export function canAddIng(keys, id) {
   const L = SETTINGS.limits;
   const ing = ING[id];
-  if (!ing) return 'Ингредиент не найден';
-  if (isStopped(id)) return `${ing.name}: нет в наличии`;
-  if (keys.length >= L.maxLayers) return `Максимум ${L.maxLayers} слоёв в одном бургере`;
+  if (!ing) return t('Ингредиент не найден');
+  if (isStopped(id)) return t('{name}: нет в наличии', { name: nm(ing) });
+  if (keys.length >= L.maxLayers) return t('Максимум {n} слоёв в одном бургере', { n: L.maxLayers });
   const key = ing.cat === 'bun' ? `mid:${id}` : id;
   const same = keys.filter((k) => k === key).length;
-  if (ing.cat !== 'bun' && same >= L.maxSame) return `Не больше ${L.maxSame} × ${ing.short || ing.name}`;
+  if (ing.cat !== 'bun' && same >= L.maxSame) return t('Не больше {n} × {name}', { n: L.maxSame, name: shortName(ing) });
   const max = L.maxCat?.[ing.cat];
-  if (max != null && keys.filter((k) => catOf(k) === ing.cat).length >= max) return `Не больше ${max} ${CAT_NAMES[ing.cat] || 'слоёв этой категории'}`;
+  if (max != null && keys.filter((k) => catOf(k) === ing.cat).length >= max) return t('Не больше {n} {what}', { n: max, what: catName(ing.cat) });
   for (const [a, b] of L.forbidden || []) {
     const other = id === a ? b : id === b ? a : null;
-    if (other && keys.some((k) => parseKey(k).ing?.id === other)) return `${ing.name} не сочетается с «${ING[other]?.name || other}»`;
+    if (other && keys.some((k) => parseKey(k).ing?.id === other)) return t('{a} не сочетается с «{b}»', { a: nm(ing), b: nm(ING[other]) || other });
   }
   return null;
 }
@@ -249,10 +282,10 @@ export function checkBurger(keys) {
   const errs = [];
   const fillings = keys.filter((k) => { const c = catOf(k); return c && c !== 'bunEnd' && c !== 'bun'; });
   const hasEnd = (role) => keys.some((k) => { const p = parseKey(k); return p.role === role && p.ing; });
-  if (L.requireBun && !(hasEnd('top') && hasEnd('bottom'))) errs.push('Нужна булочка: верх и низ');
-  if (fillings.length < L.minFillings) errs.push(`Добавь хотя бы ${L.minFillings} ${plural(L.minFillings, 'ингредиент', 'ингредиента', 'ингредиентов')} между булочками`);
-  if (L.requireMeat && !keys.some((k) => catOf(k) === 'meat')) errs.push('Нужна хотя бы одна котлета');
-  if (keys.length > L.maxLayers) errs.push(`Максимум ${L.maxLayers} слоёв, сейчас ${keys.length}`);
+  if (L.requireBun && !(hasEnd('top') && hasEnd('bottom'))) errs.push(t('Нужна булочка: верх и низ'));
+  if (fillings.length < L.minFillings) errs.push(t('Добавь хотя бы {n} ингр. между булочками', { n: L.minFillings }));
+  if (L.requireMeat && !keys.some((k) => catOf(k) === 'meat')) errs.push(t('Нужна хотя бы одна котлета'));
+  if (keys.length > L.maxLayers) errs.push(t('Максимум {n} слоёв, сейчас {cur}', { n: L.maxLayers, cur: keys.length }));
   const cnt = {};
   const byCat = {};
   for (const k of keys) {
@@ -263,15 +296,15 @@ export function checkBurger(keys) {
   }
   for (const [k, n] of Object.entries(cnt)) {
     const { ing } = parseKey(k);
-    if (ing.cat !== 'bun' && n > L.maxSame) errs.push(`Не больше ${L.maxSame} × ${ing.short || ing.name}`);
+    if (ing.cat !== 'bun' && n > L.maxSame) errs.push(t('Не больше {n} × {name}', { n: L.maxSame, name: shortName(ing) }));
   }
   for (const [c, n] of Object.entries(byCat)) {
     const max = L.maxCat?.[c];
-    if (max != null && n > max) errs.push(`Не больше ${max} ${CAT_NAMES[c] || 'слоёв этой категории'}`);
+    if (max != null && n > max) errs.push(t('Не больше {n} {what}', { n: max, what: catName(c) }));
   }
   const ids = new Set(keys.map((k) => parseKey(k).ing?.id));
   for (const [a, b] of L.forbidden || []) {
-    if (ids.has(a) && ids.has(b)) errs.push(`${ING[a]?.name || a} не сочетается с «${ING[b]?.name || b}»`);
+    if (ids.has(a) && ids.has(b)) errs.push(t('{a} не сочетается с «{b}»', { a: nm(ING[a]) || a, b: nm(ING[b]) || b }));
   }
   return errs;
 }
@@ -411,7 +444,7 @@ export function decodeShort(code) {
       const n = parseInt(body.slice(i, i + 2), 36);
       const ing = INGREDIENTS[Math.floor(n / 4)];
       const role = ROLES[n % 4];
-      if (ing) keys.push(role ? `${role}:${ing.id}` : ing.id);
+      if (ing && !ing.deleted) keys.push(role ? `${role}:${ing.id}` : ing.id);
     }
     if (!keys.length) return null;
     let name = '', author = '';

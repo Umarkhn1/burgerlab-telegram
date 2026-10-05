@@ -1,8 +1,9 @@
 // Telegram-бот BurgerLab на grammY.
 import { Bot, InlineKeyboard, Keyboard } from 'grammy';
-import { getOrder, ordersOfUser, todayStats, getUser, saveUser, tgRole, tgStaffIds, findUserByUsername } from './store.mjs';
+import { getOrder, ordersOfUser, todayStats, getUser, saveUser, tgRole, tgStaffIds, findUserByUsername, applyReferral, cutletsOf } from './store.mjs';
 import { kitchenText, customerText, orderShortLine, changeStatus, esc } from './orders.mjs';
-import { STATUSES, CANCEL_REASONS } from '../src/data.js';
+import { STATUSES, CANCEL_REASONS, SETTINGS } from '../src/data.js';
+import { tr, langFromCode, LANGS } from '../src/i18n.js';
 import { fmtPrice, nextStatus, isClosed, normPhone, fmtPhone, validPhone, zoneFor } from '../src/calc.js';
 
 // Адрес по координатам (OpenStreetMap Nominatim). Не получилось — вернём '' и адрес уточнят в приложении.
@@ -26,11 +27,15 @@ export function createBot({ token, webappUrl, kitchenChatId, apiRoot }) {
 
   const appMenuButton = { type: 'web_app', text: '🍔 BurgerLab', web_app: { url: webappUrl } };
   const isAdmin = (ctx) => tgRole(ctx.from?.id) === 'admin';
+  // Язык клиента: выбранный в боте или приложении, иначе по языку Telegram
+  const langOfId = (id, code) => getUser(id)?.lang || langFromCode(code);
+  const L = (ctx) => langOfId(ctx.from?.id, ctx.from?.language_code);
+  const T = (ctx, s, v) => tr(L(ctx), s, v);
   // Сотрудникам — вторая кнопка: сразу в панель внутри Mini App
-  const openAppKb = (ctx, text = '🍔 Собрать бургер') => {
-    const kb = new InlineKeyboard().webApp(text, webappUrl);
+  const openAppKb = (ctx, text) => {
+    const kb = new InlineKeyboard().webApp(text || T(ctx, '🍔 Собрать бургер'), webappUrl);
     const role = ctx && tgRole(ctx.from?.id);
-    return role ? kb.row().webApp(role === 'admin' ? '🛠 Админ-панель' : '🧾 Касса', `${webappUrl}?panel=1`) : kb;
+    return role ? kb.row().webApp(role === 'admin' ? '🛠 Админ-панель' : role === 'cashier' ? '🧾 Касса' : '👨‍🍳 Кухня', `${webappUrl}?panel=1`) : kb;
   };
 
   // Запоминаем никнейм и имя каждого, кто пишет боту: по @username сотрудника можно найти в админ-панели
@@ -45,51 +50,69 @@ export function createBot({ token, webappUrl, kitchenChatId, apiRoot }) {
   });
 
   // ── Клиент ──
-  // /start обязательно просит номер, затем геолокацию. Только после этого — кнопка Mini App.
+  // /start: язык (если ещё не выбран) → номер телефона → геолокация → кнопка Mini App.
   // Данные сохраняются на сервере, и приложение подставляет их в заказ само (GET /api/me).
-  const contactKb = () => new Keyboard().requestContact('📱 Поделиться номером').resized().persistent();
-  const locationKb = () => new Keyboard().requestLocation('📍 Отправить геолокацию').resized().persistent();
-  const welcome = (name) => `Привет, ${esc(name)}! 👋\n\n<b>BurgerLab — твой бургер. Твои правила.</b>\n\nСобирай бургер по слоям: выбирай булочку, котлеты, сыры, овощи и соусы. Цена, вес, калории и высота считаются сразу 🔥`;
+  const contactKb = (ctx) => new Keyboard().requestContact(T(ctx, '📱 Поделиться номером')).resized().persistent();
+  const locationKb = (ctx) => new Keyboard().requestLocation(T(ctx, '📍 Отправить геолокацию')).resized().persistent();
+  const langKb = () => new InlineKeyboard().text("🇺🇿 O'zbekcha", 'lang:uz').text('🇷🇺 Русский', 'lang:ru');
+  const welcome = (ctx) => T(ctx, 'Привет, {name}! 👋\n\n<b>BurgerLab — твой бургер. Твои правила.</b>\n\nСобирай бургер по слоям или выбирай готовое из меню. Цена, вес и калории считаются сразу 🔥', { name: esc(ctx.from?.first_name || T(ctx, 'друг')) });
   const missing = (u) => (!u?.phone ? 'phone' : !u?.location ? 'location' : null);
 
-  const askPhone = (ctx, text = 'Чтобы оформлять заказы, поделись номером телефона — кнопка внизу 👇') =>
-    ctx.reply(text, { parse_mode: 'HTML', reply_markup: contactKb() });
-  const askLocation = (ctx, text = 'Теперь отправь геолокацию — по ней мы определим адрес и зону доставки 👇\n\n<i>Можно отправить и другую точку: 📎 → Геопозиция.</i>') =>
-    ctx.reply(text, { parse_mode: 'HTML', reply_markup: locationKb() });
+  const askPhone = (ctx, text) => ctx.reply(text || T(ctx, 'Чтобы оформлять заказы, поделись номером телефона — кнопка внизу 👇'), { parse_mode: 'HTML', reply_markup: contactKb(ctx) });
+  const askLocation = (ctx, text) => ctx.reply(text || T(ctx, 'Теперь отправь геолокацию — по ней мы определим адрес и посчитаем доставку 👇\n\n<i>Можно отправить и другую точку: 📎 → Геопозиция.</i>'), { parse_mode: 'HTML', reply_markup: locationKb(ctx) });
   const ask = (ctx, step, text) => (step === 'phone' ? askPhone(ctx, text) : askLocation(ctx, text));
   const enableMenuApp = (ctx) => ctx.api.setChatMenuButton({ chat_id: ctx.chat.id, menu_button: appMenuButton }).catch(() => {});
 
   // Всё собрано: убрать клавиатуру, показать кнопку приложения и включить кнопку меню в этом чате
   async function ready(ctx, u) {
-    await ctx.reply(`✅ Готово!\n📱 Телефон: <b>${esc(u.phone)}</b>\n📍 Адрес: <b>${esc(u.address || 'по геолокации')}</b>\n\nОни уже подставлены в заказ. Сменить: /phone, /location`, { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } });
-    await ctx.reply('Собирай свой бургер 👇', { reply_markup: openAppKb(ctx) });
+    await ctx.reply(T(ctx, '✅ Готово!\n📱 Телефон: <b>{phone}</b>\n📍 Адрес: <b>{address}</b>\n\nОни уже подставлены в заказ. Сменить: /phone, /location', { phone: esc(u.phone), address: esc(u.address || T(ctx, 'по геолокации')) }), { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } });
+    await ctx.reply(T(ctx, 'Собирай свой бургер 👇'), { reply_markup: openAppKb(ctx) });
     await enableMenuApp(ctx);
   }
 
-  bot.command('start', async (ctx) => {
-    if (ctx.chat.type !== 'private') return;
-    const name = ctx.from?.first_name || 'друг';
+  async function startFlow(ctx) {
     const u = getUser(ctx.from.id);
     const step = missing(u);
     if (!step) {
       await enableMenuApp(ctx);
-      return ctx.reply(`${welcome(name)}\n\n📱 ${esc(u.phone)}\n📍 ${esc(u.address || 'геолокация сохранена')}\n(сменить — /phone, /location)\n\nЖми кнопку ниже 👇`, { parse_mode: 'HTML', reply_markup: openAppKb(ctx) });
+      return ctx.reply(`${welcome(ctx)}\n\n📱 ${esc(u.phone)}\n📍 ${esc(u.address || T(ctx, 'геолокация сохранена'))}\n${T(ctx, '(сменить — /phone, /location, язык — /lang)')}\n\n${T(ctx, 'Жми кнопку ниже 👇')}`, { parse_mode: 'HTML', reply_markup: openAppKb(ctx) });
     }
-    await ctx.reply(welcome(name), { parse_mode: 'HTML' });
-    await ask(ctx, step, step === 'phone' ? 'Для начала поделись номером телефона — кнопка внизу 👇' : undefined);
+    await ctx.reply(welcome(ctx), { parse_mode: 'HTML' });
+    await ask(ctx, step, step === 'phone' ? T(ctx, 'Для начала поделись номером телефона — кнопка внизу 👇') : undefined);
+  }
+
+  bot.command('start', async (ctx) => {
+    if (ctx.chat.type !== 'private') return;
+    // Ссылка друга: t.me/бот?start=ref<id> — бонус обоим после первого заказа
+    const ref = String(ctx.match || '').match(/^ref(\d{3,15})$/);
+    if (ref && applyReferral(ctx.from.id, ref[1])) {
+      const R = SETTINGS.referral || {};
+      await ctx.reply(T(ctx, '🎁 Тебя пригласил друг! После первого заказа ты получишь {n} котлеток — ими можно оплатить следующие заказы.', { n: R.inviteeBonus }));
+    }
+    if (!getUser(ctx.from.id)?.lang) return ctx.reply("Tilni tanlang · Выберите язык", { reply_markup: langKb() });
+    await startFlow(ctx);
   });
 
-  bot.command('phone', (ctx) => askPhone(ctx, 'Нажми кнопку внизу, чтобы отправить номер 👇'));
-  bot.command('location', (ctx) => askLocation(ctx, 'Отправь новую геолокацию кнопкой внизу или точку на карте (📎 → Геопозиция) 👇'));
+  bot.command('lang', (ctx) => ctx.reply("Tilni tanlang · Выберите язык", { reply_markup: langKb() }));
+  bot.callbackQuery(/^lang:(ru|uz)$/, async (ctx) => {
+    const first = !getUser(ctx.from.id)?.lang;
+    saveUser(ctx.from.id, { lang: ctx.match[1] });
+    await ctx.answerCallbackQuery({ text: LANGS[ctx.match[1]] });
+    await ctx.editMessageText(`✅ ${LANGS[ctx.match[1]]}`).catch(() => {});
+    if (first) await startFlow(ctx);
+  });
+
+  bot.command('phone', (ctx) => askPhone(ctx, T(ctx, 'Нажми кнопку внизу, чтобы отправить номер 👇')));
+  bot.command('location', (ctx) => askLocation(ctx, T(ctx, 'Отправь новую геолокацию кнопкой внизу или точку на карте (📎 → Геопозиция) 👇')));
 
   // Контакт приходит и из кнопки бота, и из Mini App (кнопка «Из Telegram» при оформлении)
   bot.on('message:contact', async (ctx) => {
     const c = ctx.message.contact;
-    if (c.user_id && c.user_id !== ctx.from.id) return askPhone(ctx, 'Отправь, пожалуйста, <b>свой</b> номер — кнопкой внизу.');
+    if (c.user_id && c.user_id !== ctx.from.id) return askPhone(ctx, T(ctx, 'Отправь, пожалуйста, <b>свой</b> номер — кнопкой внизу.'));
     const digits = normPhone(c.phone_number);
     const phone = validPhone(digits) ? fmtPhone(digits) : `+${digits}`;
     const u = saveUser(ctx.from.id, { phone, name: [c.first_name, c.last_name].filter(Boolean).join(' ') });
-    await ctx.reply(`✅ Номер сохранён: <b>${esc(phone)}</b>${validPhone(digits) ? '' : '\n⚠ Для доставки нужен номер Узбекистана (+998) — его можно поправить при оформлении.'}`, { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } });
+    await ctx.reply(`${T(ctx, '✅ Номер сохранён: <b>{phone}</b>', { phone: esc(phone) })}${validPhone(digits) ? '' : `\n${T(ctx, '⚠ Для доставки нужен номер Узбекистана (+998) — его можно поправить при оформлении.')}`}`, { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } });
     if (missing(u)) return askLocation(ctx);
     await ready(ctx, u);
   });
@@ -101,27 +124,27 @@ export function createBot({ token, webappUrl, kitchenChatId, apiRoot }) {
     const address = ctx.message.venue?.address || (await reverseGeocode(location));
     const { zone, km } = zoneFor(location);
     const u = saveUser(ctx.from.id, { location, address });
-    const dist = `${String(km).replace('.', ',')} км`;
+    const dist = String(km).replace('.', ',');
     const zoneLine = zone
-      ? `🛵 ${dist} от ресторана · доставка ${fmtPrice(zone.fee)} · в пути ≈ ${zone.etaMin} мин`
-      : `⚠ Это ${dist} от ресторана — вне зоны доставки. Доступны самовывоз и заказ в зале.`;
-    await ctx.reply(`✅ Геолокация сохранена${address ? `: <b>${esc(address)}</b>` : ''}\n${zoneLine}`, { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } });
+      ? T(ctx, '🛵 {km} км от ресторана · доставка {fee} · в пути ≈ {min} мин', { km: dist, fee: fmtPrice(zone.fee), min: zone.etaMin })
+      : T(ctx, '⚠ Это {km} км от ресторана — вне зоны доставки. Доступны самовывоз и заказ в зале.', { km: dist });
+    await ctx.reply(`${T(ctx, '✅ Геолокация сохранена')}${address ? `: <b>${esc(address)}</b>` : ''}\n${zoneLine}`, { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } });
     if (missing(u)) return askPhone(ctx);
     await ready(ctx, u);
   });
 
   bot.command('orders', async (ctx) => {
     const list = ordersOfUser(ctx.from.id);
-    if (!list.length) return ctx.reply('У тебя пока нет заказов. Самое время собрать первый бургер!', { reply_markup: openAppKb(ctx) });
+    if (!list.length) return ctx.reply(T(ctx, 'У тебя пока нет заказов. Самое время собрать первый бургер!'), { reply_markup: openAppKb(ctx) });
     const kb = new InlineKeyboard();
-    list.filter((o) => !isClosed(o)).forEach((o) => kb.webApp(`📍 Статус #${o.id}`, `${webappUrl}?order=${o.id}`).row());
-    await ctx.reply(`🧾 <b>Твои последние заказы</b>\n\n${list.map(orderShortLine).join('\n')}`, { parse_mode: 'HTML', reply_markup: kb.webApp('🍔 Новый бургер', webappUrl) });
+    list.filter((o) => !isClosed(o)).forEach((o) => kb.webApp(T(ctx, '📍 Статус #{id}', { id: o.id }), `${webappUrl}?order=${o.id}`).row());
+    await ctx.reply(`🧾 <b>${T(ctx, 'Твои последние заказы')}</b>\n\n${list.map((o) => orderShortLine(o, L(ctx))).join('\n')}`, { parse_mode: 'HTML', reply_markup: kb.webApp(T(ctx, '🍔 Новый бургер'), webappUrl) });
   });
 
   // Служебные команды и адрес кассы показываем только персоналу
   bot.command('help', (ctx) => ctx.reply(
-    '/start — открыть BurgerLab\n/orders — мои заказы\n/phone — сменить номер телефона\n/location — сменить адрес доставки'
-    + (isStaff(ctx) ? `\n\nДля персонала:\n/chatid — узнать ID чата (для KITCHEN_CHAT_ID)\n/today — продажи за сегодня\nКасса в браузере: ${webappUrl}staff${isAdmin(ctx) ? '\nАдмин-панель есть и в приложении — раздел «Админ»' : ''}` : ''),
+    T(ctx, '/start — открыть BurgerLab\n/orders — мои заказы\n/phone — сменить номер телефона\n/location — сменить адрес доставки\n/lang — сменить язык')
+    + (isStaff(ctx) ? `\n\nДля персонала:\n/chatid — узнать ID чата (для KITCHEN_CHAT_ID)\n/today — продажи за сегодня\nКасса в браузере: ${webappUrl}staff${isAdmin(ctx) ? '\nАдмин-панель есть и в приложении' : ''}` : ''),
   ));
 
   // ── Персонал ──
@@ -175,7 +198,7 @@ export function createBot({ token, webappUrl, kitchenChatId, apiRoot }) {
     if (ctx.chat.type !== 'private' || ctx.message.text?.startsWith('/')) return next();
     const step = missing(getUser(ctx.from.id));
     if (!step) return next();
-    await ask(ctx, step, step === 'phone' ? 'Чтобы продолжить, поделись номером — кнопка внизу 👇' : 'Чтобы продолжить, отправь геолокацию — кнопка внизу 👇');
+    await ask(ctx, step, T(ctx, step === 'phone' ? 'Чтобы продолжить, поделись номером — кнопка внизу 👇' : 'Чтобы продолжить, отправь геолокацию — кнопка внизу 👇'));
   });
 
   bot.catch((err) => console.error('Ошибка бота:', err.error?.message || err.message));
@@ -218,10 +241,22 @@ export function createBot({ token, webappUrl, kitchenChatId, apiRoot }) {
 
   async function notifyCustomer(o, event) {
     if (!o.userId) return;
+    const lang = langOfId(o.userId) || o.lang;
     try {
-      const kb = isClosed(o) ? new InlineKeyboard().webApp('🍔 Собрать ещё', webappUrl) : new InlineKeyboard().webApp('📍 Открыть статус', `${webappUrl}?order=${o.id}`);
-      await bot.api.sendMessage(o.userId, customerText(o, event), { parse_mode: 'HTML', reply_markup: kb });
+      const kb = isClosed(o) ? new InlineKeyboard().webApp(tr(lang, '🍔 Собрать ещё'), webappUrl) : new InlineKeyboard().webApp(tr(lang, '📍 Открыть статус'), `${webappUrl}?order=${o.id}`);
+      await bot.api.sendMessage(o.userId, customerText(o, event, lang), { parse_mode: 'HTML', reply_markup: kb });
     } catch (e) { console.error(`Не удалось уведомить клиента заказа #${o.id}:`, e.message); }
+  }
+
+  // Начислены котлетки за приглашение
+  async function notifyBonus(userId, amount, kind) {
+    const lang = langOfId(userId);
+    const text = kind === 'inviter'
+      ? tr(lang, '🎉 Твой друг сделал первый заказ! Тебе начислено {n} котлеток. Баланс: {balance}.', { n: amount, balance: cutletsOf(userId) })
+      : tr(lang, '🎁 Спасибо за первый заказ! Тебе начислено {n} котлеток. Баланс: {balance}.', { n: amount, balance: cutletsOf(userId) });
+    try { await bot.api.sendMessage(userId, `${text}
+${tr(lang, 'Котлетками можно оплатить часть следующего заказа.')}`, { reply_markup: new InlineKeyboard().webApp(tr(lang, '🍔 Собрать бургер'), webappUrl) }); }
+    catch (e) { console.error('Не удалось сообщить о бонусе:', e.message); }
   }
 
   // Оповещение персонала: группа кухни и администраторы
@@ -234,13 +269,12 @@ export function createBot({ token, webappUrl, kitchenChatId, apiRoot }) {
   }
 
   async function setup() {
-    await bot.api.setMyCommands([
-      { command: 'start', description: 'Открыть BurgerLab' },
-      { command: 'orders', description: 'Мои заказы' },
-      { command: 'phone', description: 'Номер телефона для заказов' },
-      { command: 'location', description: 'Адрес доставки' },
-      { command: 'help', description: 'Помощь' },
-    ]);
+    const commands = (lang) => [
+      ['start', 'Открыть BurgerLab'], ['orders', 'Мои заказы'], ['phone', 'Номер телефона для заказов'],
+      ['location', 'Адрес доставки'], ['lang', 'Язык'], ['help', 'Помощь'],
+    ].map(([command, d]) => ({ command, description: tr(lang, d) }));
+    await bot.api.setMyCommands(commands('ru'));
+    await bot.api.setMyCommands(commands('uz'), { language_code: 'uz' }).catch(() => {});
     // По умолчанию кнопка меню — список команд. Приложение она открывает только в чате,
     // где клиент уже поделился номером и геолокацией (см. ready)
     await bot.api.setChatMenuButton({ menu_button: { type: 'commands' } });
@@ -283,5 +317,5 @@ export function createBot({ token, webappUrl, kitchenChatId, apiRoot }) {
     } catch { return false; }
   }
 
-  return { bot, setup, sendToKitchen, refreshKitchenCard, notifyCustomer, alertStaff, resolveTgUser, notifyStaffAdded };
+  return { bot, setup, sendToKitchen, refreshKitchenCard, notifyCustomer, notifyBonus, alertStaff, resolveTgUser, notifyStaffAdded };
 }

@@ -156,3 +156,7 @@ export const apiCreateOrder = (payload) => api('/orders', { method: 'POST', body
 export const apiGetOrder = (id) => api(`/orders/${id}`);
 export const apiMe = () => api('/me');
 export const apiMyOrders = () => api('/orders');
+export const apiSetLang = (lang) => api('/me', { method: 'POST', body: JSON.stringify({ lang }) });
+export const apiRef = (code) => api('/ref', { method: 'POST', body: JSON.stringify({ code }) });
+export const apiPromo = (code, items) => api('/promo', { method: 'POST', body: JSON.stringify({ code, items }) });
+export const apiPay = (id) => api(`/orders/${id}/pay`, { method: 'POST', body: '{}' });

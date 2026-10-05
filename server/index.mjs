@@ -5,8 +5,10 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { validateInitData } from './auth.mjs';
-import { loadStore, createOrder, getOrder, findByIdem, updateOrder, activeOrders, getConf, getConfRev, flush, getUser, saveUser, ordersOfUser, setOwners, tgRole } from './store.mjs';
-import { buildOrder, publicOrder, onOrderEvent, OrderError } from './orders.mjs';
+import { loadStore, createOrder, getOrder, findByIdem, updateOrder, activeOrders, getConf, getConfRev, flush, getUser, saveUser, ordersOfUser, setOwners, tgRole, cutletsOf, referralStats, applyReferral } from './store.mjs';
+import { buildOrder, publicOrder, onOrderEvent, onBonus, OrderError, checkPromo, afterCreate, markPaid } from './orders.mjs';
+import { langFromCode } from '../src/i18n.js';
+import { cartTotals, itemUnit } from '../src/calc.js';
 import { createStaffApi, ensureAdmin } from './staff.mjs';
 import { webhookCallback } from 'grammy';
 import { createBot } from './bot.mjs';
@@ -35,7 +37,7 @@ const staffSecret = process.env.STAFF_SECRET || crypto.createHash('sha256').upda
 loadStore();
 setOwners(adminIds);
 ensureAdmin();
-const { bot, setup, sendToKitchen, refreshKitchenCard, notifyCustomer, alertStaff, resolveTgUser, notifyStaffAdded } = createBot({ token: BOT_TOKEN, webappUrl, kitchenChatId: KITCHEN_CHAT_ID, apiRoot: process.env.TELEGRAM_API_ROOT });
+const { bot, setup, sendToKitchen, refreshKitchenCard, notifyCustomer, notifyBonus, alertStaff, resolveTgUser, notifyStaffAdded } = createBot({ token: BOT_TOKEN, webappUrl, kitchenChatId: KITCHEN_CHAT_ID, apiRoot: process.env.TELEGRAM_API_ROOT });
 const me = await setup();
 console.log(`✔ Бот @${me.username} подключён`);
 if (!KITCHEN_CHAT_ID && !adminIds.length) console.warn('⚠ Не заданы KITCHEN_CHAT_ID и ADMIN_IDS: заказы увидит только веб-касса, оповещения о задержках в Telegram не придут');
@@ -45,6 +47,11 @@ onOrderEvent(async (o, event) => {
   await refreshKitchenCard(o);
   await notifyCustomer(o, event);
 });
+// Начислены котлетки за приглашение — сообщение клиенту
+onBonus((userId, amount, kind) => notifyBonus(userId, amount, kind));
+
+// Язык клиента: выбранный в боте или приложении, иначе по языку Telegram
+const langOf = (user) => getUser(user.id)?.lang || langFromCode(user.language_code);
 
 // Страницы: dist/index.html (приложение) и dist/staff.html (касса и админка) + конфиг для клиента
 const DIST = path.resolve('dist');
@@ -100,12 +107,13 @@ async function postOrder(req, res, user) {
   creating.add(lock);
   try {
     let data;
-    try { data = buildOrder(body); } catch (e) {
+    try { data = buildOrder(body, Date.now(), { userId: user.id, lang: langOf(user) }); } catch (e) {
       if (e instanceof OrderError) return send(res, 400, { error: e.message, code: e.code, cids: e.cids });
       throw e;
     }
     const { order, saved } = createOrder({ ...data, idem, userId: user.id, username: user.username || '', tgName: [user.first_name, user.last_name].filter(Boolean).join(' ') });
     await saved; // ответ клиенту — только после записи на диск
+    afterCreate(order);
     console.log(`🍔 Новый заказ #${order.id} (${order.mode}) от ${order.tgName} на ${order.total} сум`);
     send(res, 201, { order: publicOrder(order) });
     const cards = await sendToKitchen(order);
@@ -154,7 +162,48 @@ const server = http.createServer(async (req, res) => {
         const tgName = [user.first_name, user.last_name].filter(Boolean).join(' ');
         if (!u || u.username !== (user.username || '') || u.tgName !== tgName) u = saveUser(user.id, { username: user.username || '', tgName });
         const role = tgRole(user.id);
-        return send(res, 200, { phone: u?.phone || '', name: u?.name || '', location: u?.location || null, address: u?.address || '', admin: !!role, role });
+        return send(res, 200, {
+          phone: u?.phone || '', name: u?.name || '', location: u?.location || null, address: u?.address || '', admin: !!role, role,
+          lang: u?.lang || '', cutlets: cutletsOf(user.id), cutletLog: (u?.cutletLog || []).slice(0, 20), referral: referralStats(user.id),
+          referredBy: !!u?.referredBy, refRewarded: !!u?.refRewarded,
+        });
+      }
+
+      // Клиент сменил язык в приложении — бот тоже будет писать на нём
+      if (req.method === 'POST' && url.pathname === '/api/me') {
+        const b = await readBody(req);
+        if (['ru', 'uz'].includes(b.lang)) saveUser(user.id, { lang: b.lang });
+        return send(res, 200, { ok: true });
+      }
+
+      // Пришёл по ссылке друга (startapp=ref<id>)
+      if (req.method === 'POST' && url.pathname === '/api/ref') {
+        const b = await readBody(req);
+        const m = String(b.code || '').match(/^ref(\d{3,15})$/);
+        return send(res, 200, { ok: !!m && applyReferral(user.id, m[1]) });
+      }
+
+      // Проверка промокода при оформлении: сумма считается по актуальным ценам
+      if (req.method === 'POST' && url.pathname === '/api/promo') {
+        const b = await readBody(req);
+        const items = (Array.isArray(b.items) ? b.items : []).slice(0, 30).map((it) => ({ ...it, qty: Math.min(20, Math.max(1, Math.floor(Number(it.qty) || 1))) })).map((it) => ({ ...it, unit: itemUnit(it) }));
+        try {
+          const r = checkPromo(b.code, cartTotals(items).sub, user.id, langOf(user));
+          return send(res, 200, { code: r.promo.code, discount: r.discount, type: r.promo.type, value: r.promo.value });
+        } catch (e) {
+          if (e instanceof OrderError) return send(res, 400, { error: e.message, code: e.code });
+          throw e;
+        }
+      }
+
+      // Оплата Click / Payme (тестовый режим)
+      const pay = url.pathname.match(/^\/api\/orders\/(\d+)\/pay$/);
+      if (req.method === 'POST' && pay) {
+        const o = getOrder(pay[1]);
+        if (!o || o.userId !== user.id) return send(res, 404, { error: 'Заказ не найден' });
+        const r = markPaid(o);
+        if (r.error) return send(res, r.code, { error: r.error });
+        return send(res, 200, { order: publicOrder(r.order) });
       }
 
       // Последние заказы клиента — чтобы история была на любом устройстве, а не только там, где оформляли
@@ -200,7 +249,7 @@ const watchdog = setInterval(() => {
     } else if (!alerts.ready && ['accepted', 'cooking'].includes(o.status) && now > d.readyBy) {
       mark('ready');
       alertStaff(`🔥 <b>Просрочено приготовление</b>\n${head}\nДолжен был быть готов к ${fmtTime(d.readyBy)}`);
-    } else if (!alerts.done && o.mode === 'delivery' && ['ready', 'courier', 'delivering'].includes(o.status) && now > d.doneBy) {
+    } else if (!alerts.done && o.mode === 'delivery' && ['ready', 'delivering'].includes(o.status) && now > d.doneBy) {
       mark('done');
       alertStaff(`🛵 <b>Просрочена доставка</b>\n${head}\nОбещали к ${fmtTime(o.etaAt)}`);
     }

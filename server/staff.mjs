@@ -5,14 +5,28 @@ import {
   getRev, getConfRev, getConf, activeOrders, listOrders, getOrder, setStop, setMenu, setSettings,
   staffList, getStaff, findStaffByLogin, saveStaff,
   tgRole, getOwners, isOwner, tgStaffList, getTgStaff, saveTgStaff, removeTgStaff, touchTgStaff, getUser,
+  promoList, findPromo, savePromo, removePromo, cookSecret, cookVer, resetCookSessions,
 } from './store.mjs';
 import { changeStatus, changeEta } from './orders.mjs';
-import { STATUSES, MODES, DEFAULT_SETTINGS, INGREDIENTS, UPSELL, PARTY } from '../src/data.js';
+import { STATUSES, MODES, DEFAULT_SETTINGS, INGREDIENTS, PRODUCTS, PAYMENTS } from '../src/data.js';
 import { withZoneNames } from '../src/calc.js';
 
 export const ROLES = {
-  admin: { t: 'Администратор', perms: ['orders', 'history', 'stop', 'eta', 'menu', 'settings', 'staff', 'reports', 'audit'] },
+  admin: { t: 'Администратор', perms: ['orders', 'kitchen', 'history', 'stop', 'eta', 'menu', 'promos', 'settings', 'staff', 'reports', 'audit'] },
   cashier: { t: 'Кассир', perms: ['orders', 'history', 'stop'] },
+  cook: { t: 'Повар', perms: ['kitchen'] },
+};
+const COOK_HOURS = 16; // вход повара действует одну смену
+
+// Код входа повара: 6 цифр, меняется каждую минуту (HMAC от секрета и номера минуты).
+// Принимаем текущий и предыдущий код — чтобы успеть ввести на границе минуты.
+export function cookCode(t = Date.now()) {
+  const h = crypto.createHmac('sha256', cookSecret()).update(String(Math.floor(t / 60000))).digest();
+  return String(h.readUInt32BE(0) % 1_000_000).padStart(6, '0');
+}
+const cookCodeOk = (code) => {
+  const c = String(code || '').replace(/\D/g, '');
+  return c.length === 6 && [cookCode(), cookCode(Date.now() - 60000)].some((x) => crypto.timingSafeEqual(Buffer.from(x), Buffer.from(c)));
 };
 const TOKEN_DAYS = 14;
 const VIS = ['bun', 'patty', 'crispy', 'smash', 'wagyu', 'cheese', 'tomato', 'onion', 'pickles', 'rings', 'lettuce', 'avocado', 'mushroom', 'caramel', 'pepper', 'sauce', 'bacon', 'egg', 'orings', 'fries', 'hash', 'pineapple', 'pastrami', 'crumbs', 'nachos', 'poppers', 'mac'];
@@ -40,7 +54,7 @@ const tgStaffUser = (t, role) => ({
   id: `tg:${t.id}`, tgId: t.id, login: t.username ? `@${t.username}` : `tg${t.id}`, name: [t.first_name, t.last_name].filter(Boolean).join(' ') || 'Сотрудник',
   role, active: true, tg: true,
 });
-const ROLE_T = { admin: 'администратор', cashier: 'кассир' };
+const ROLE_T = { admin: 'администратор', cashier: 'кассир', cook: 'повар' };
 
 export function createStaffApi({ secret, send, readBody, tooMany, botToken, resolveTgUser, notifyStaffAdded }) {
   const who = (u) => `${u.name} (${u.login})`;
@@ -54,16 +68,24 @@ export function createStaffApi({ secret, send, readBody, tooMany, botToken, reso
       if (!role) fail(403, 'Раздел доступен только сотрудникам');
       touchTgStaff(a.user.id, { username: a.user.username || '', name: [a.user.first_name, a.user.last_name].filter(Boolean).join(' ') || getTgStaff(a.user.id)?.name });
       const u = tgStaffUser(a.user, role);
-      if (perm && !ROLES[u.role]?.perms.includes(perm)) fail(403, 'Недостаточно прав');
+      if (!allowed(u, perm)) fail(403, 'Недостаточно прав');
       return u;
     }
     const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const p = verifyToken(token, secret);
+    if (p?.cook) {
+      if (p.ver !== cookVer()) fail(401, 'Смена завершена — войдите по новому коду');
+      const u = { id: `cook:${p.sid}`, login: 'повар', name: p.name, role: 'cook', active: true };
+      if (!allowed(u, perm)) fail(403, 'Недостаточно прав');
+      return u;
+    }
     const u = p && getStaff(p.uid);
     if (!u || u.active === false || u.ver !== p.ver) fail(401, 'Войдите заново');
-    if (perm && !ROLES[u.role]?.perms.includes(perm)) fail(403, 'Недостаточно прав');
+    if (!allowed(u, perm)) fail(403, 'Недостаточно прав');
     return u;
   }
+  // perm — право или список прав (достаточно любого)
+  const allowed = (u, perm) => !perm || [].concat(perm).some((x) => ROLES[u.role]?.perms.includes(x));
 
   const range = (url) => {
     const from = Number(url.searchParams.get('from')) || 0;
@@ -82,13 +104,36 @@ export function createStaffApi({ secret, send, readBody, tooMany, botToken, reso
       return { token, user: publicUser(u) };
     }],
 
+    // Повар входит по коду, который администратор видит в панели (меняется каждую минуту)
+    ['POST', /^\/api\/staff\/cook-login$/, async (req) => {
+      const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
+      if (tooMany(`cook:${ip}`, 8, 5 * 60_000)) fail(429, 'Слишком много попыток. Подождите 5 минут');
+      const { code, name } = await readBody(req);
+      if (!cookCodeOk(code)) fail(401, 'Неверный или устаревший код. Попросите у администратора новый');
+      const n = String(name || '').trim().slice(0, 30) || 'Повар';
+      const sid = crypto.randomBytes(4).toString('hex');
+      const token = signToken({ cook: 1, sid, name: n, ver: cookVer(), exp: Date.now() + COOK_HOURS * 3600_000 }, secret);
+      return { token, user: publicUser({ id: `cook:${sid}`, login: 'повар', name: n, role: 'cook' }) };
+    }],
+
+    ['GET', /^\/api\/staff\/cook-code$/, async (req) => {
+      auth(req, 'staff');
+      return { code: cookCode(), expiresIn: 60000 - (Date.now() % 60000) };
+    }],
+
+    ['POST', /^\/api\/staff\/cook-reset$/, async (req) => {
+      const u = auth(req, 'staff');
+      await resetCookSessions(who(u));
+      return { ok: true };
+    }],
+
     ['GET', /^\/api\/staff\/me$/, async (req) => ({ user: publicUser(auth(req)), roles: ROLES })],
 
     // Касса опрашивает этот адрес каждые несколько секунд. desk=1 — это экран кассы:
     // новые заказы, которые он получил, становятся «Заказ на кассе».
     ['GET', /^\/api\/staff\/sync$/, async (req, url) => {
-      const u = auth(req, 'orders');
-      if (url.searchParams.get('desk') === '1') {
+      const u = auth(req, ['orders', 'kitchen']);
+      if (url.searchParams.get('desk') === '1' && ROLES[u.role].perms.includes('orders')) {
         for (const o of activeOrders().filter((x) => x.status === 'created')) changeStatus(o.id, 'received', { name: u.name, by: `Касса: ${who(u)}` });
       }
       const rev = getRev();
@@ -99,10 +144,16 @@ export function createStaffApi({ secret, send, readBody, tooMany, botToken, reso
     }],
 
     ['POST', /^\/api\/staff\/orders\/(\d+)\/status$/, async (req, url, m) => {
-      const u = auth(req, 'orders');
+      const u = auth(req, ['orders', 'kitchen']);
       const { to, reason } = await readBody(req);
       if (!STATUSES[to]) fail(400, 'Неизвестный статус');
-      const r = changeStatus(m[1], to, { name: u.name, by: `Касса: ${who(u)}` }, { reason });
+      // Повар только готовит: «Готовится» после приёма и «Готов»
+      if (u.role === 'cook') {
+        const o = getOrder(m[1]);
+        const okStep = o && ((o.status === 'accepted' && to === 'cooking') || (o.status === 'cooking' && to === 'ready') || (o.status === 'accepted' && to === 'ready'));
+        if (!okStep) fail(403, 'Повар может только начать готовить и отметить готовность');
+      }
+      const r = changeStatus(m[1], to, { name: u.name, by: `${u.role === 'cook' ? 'Кухня' : 'Касса'}: ${who(u)}` }, { reason });
       if (r.error) fail(r.code, r.error);
       return { order: staffOrder(r.order) };
     }],
@@ -133,8 +184,7 @@ export function createStaffApi({ secret, send, readBody, tooMany, botToken, reso
     ['POST', /^\/api\/staff\/stop$/, async (req) => {
       const u = auth(req, 'stop');
       const { id, stopped } = await readBody(req);
-      const name = INGREDIENTS.find((x) => x.id === id)?.name || UPSELL.find((x) => x.id === id)?.name
-        || (id === 'party' ? 'Party Burger (все)' : PARTY.find((x) => x.id === id) ? `Party Burger на ${PARTY.find((x) => x.id === id).people}` : null);
+      const name = INGREDIENTS.find((x) => x.id === id && !x.deleted)?.name || PRODUCTS.find((x) => x.id === id)?.name;
       if (!name) fail(400, 'Позиция не найдена');
       await setStop(id, !!stopped, who(u), name);
       return { stop: getConf().stop };
@@ -252,6 +302,31 @@ export function createStaffApi({ secret, send, readBody, tooMany, botToken, reso
       return { ok: true };
     }],
 
+    // ── Промокоды ──
+    ['GET', /^\/api\/staff\/promos$/, async (req) => {
+      auth(req, 'promos');
+      const stats = {};
+      for (const o of listOrders({})) if (o.promo?.code && o.status !== 'cancelled') { const x = (stats[o.promo.code] ||= { uses: 0, discount: 0 }); x.uses++; x.discount += o.discount || 0; }
+      return { promos: promoList().map((p) => ({ ...p, uses: stats[p.code]?.uses || 0, discountSum: stats[p.code]?.discount || 0 })) };
+    }],
+
+    ['POST', /^\/api\/staff\/promos$/, async (req) => {
+      const u = auth(req, 'promos');
+      const b = await readBody(req);
+      const prev = b.original ? findPromo(b.original) : null;
+      const p = validatePromo(b, prev);
+      if (findPromo(p.code) && p.code !== prev?.code) fail(409, `Промокод ${p.code} уже есть`);
+      if (prev && prev.code !== p.code) removePromo(prev.code, who(u));
+      await savePromo(p, who(u), prev ? 'Промокод изменён' : 'Добавлен промокод');
+      return { promo: p };
+    }],
+
+    ['DELETE', /^\/api\/staff\/promos\/([\w-]+)$/, async (req, url, m) => {
+      const u = auth(req, 'promos');
+      if (!removePromo(decodeURIComponent(m[1]), who(u))) fail(404, 'Промокод не найден');
+      return { ok: true };
+    }],
+
     ['GET', /^\/api\/staff\/audit$/, async (req) => {
       auth(req, 'audit');
       return { audit: getConf().audit.slice(-500).reverse() };
@@ -290,17 +365,20 @@ const idOk = (id) => /^[a-z0-9_]{2,32}$/.test(String(id));
 const iconOk = (v) => /^[a-z0-9_]{2,40}$/.test(String(v || ''));
 
 function validateMenu(m, prev) {
-  if (!m || !Array.isArray(m.categories) || !Array.isArray(m.ingredients) || !Array.isArray(m.extras) || !Array.isArray(m.party)) fail(400, 'Неверный формат меню');
-  const categories = m.categories.map((c) => ({ id: c.id, name: str(c.name, 30, 'название категории'), icon: iconOk(c.icon) ? c.icon : 'restaurant', hidden: !!c.hidden }));
-  // Категории — фиксированный набор: от него зависят слои, лимиты и визуализация
-  if (categories.length !== prev.categories.length || categories.some((c) => !prev.categories.find((p) => p.id === c.id))) fail(400, 'Категории можно переименовать, скрыть или переставить, но не удалить');
+  if (!m || !Array.isArray(m.categories) || !Array.isArray(m.ingredients) || !Array.isArray(m.products) || !Array.isArray(m.productCats)) fail(400, 'Неверный формат меню');
+  const categories = m.categories.map((c) => ({ id: c.id, name: str(c.name, 30, 'название категории'), nameUz: str(c.nameUz, 30, 'nameUz', false) || undefined, icon: iconOk(c.icon) ? c.icon : 'restaurant', hidden: !!c.hidden }));
+  // Категории конструктора — фиксированный набор: от него зависят слои, лимиты и визуализация
+  if (categories.length !== prev.categories.length || categories.some((c) => !prev.categories.find((p) => p.id === c.id))) fail(400, 'Категории конструктора можно переименовать, скрыть или переставить, но не удалить');
   const catIds = categories.map((c) => c.id);
   const ingredients = m.ingredients.map((i) => {
     if (!idOk(i.id)) fail(400, `Неверный код ингредиента: ${i.id}`);
+    // Удалённый ингредиент остаётся «пустым местом» в списке: по порядку ингредиентов кодируются ссылки на рецепты
+    if (i.deleted) return { id: i.id, cat: catIds.includes(i.cat) ? i.cat : catIds[0], name: str(i.name, 40, 'название', false) || i.id, vis: VIS.includes(i.vis) ? i.vis : 'patty', price: 0, w: 0, kcal: 0, h: 1, c: '#999999', hidden: true, deleted: true };
     if (!catIds.includes(i.cat)) fail(400, `Неизвестная категория у «${i.name}»`);
     if (!VIS.includes(i.vis)) fail(400, `Неизвестный вид слоя у «${i.name}»`);
     const out = {
-      id: i.id, cat: i.cat, name: str(i.name, 40, 'название'), short: str(i.short, 20, 'короткое название', false) || undefined, en: str(i.en, 40, 'en', false) || str(i.name, 40, 'название'),
+      id: i.id, cat: i.cat, name: str(i.name, 40, 'название'), nameUz: str(i.nameUz, 40, 'nameUz', false) || undefined,
+      short: str(i.short, 20, 'короткое название', false) || undefined, shortUz: str(i.shortUz, 20, 'shortUz', false) || undefined, en: str(i.en, 40, 'en', false) || str(i.name, 40, 'название'),
       price: num(i.price, 0, 10_000_000, `Цена «${i.name}»`), w: num(i.w, 0, 5000, `Вес «${i.name}»`), kcal: num(i.kcal, 0, 10000, `Калории «${i.name}»`),
       h: num(i.h, 1, 200, `Высота «${i.name}»`), hot: i.hot ? num(i.hot, 0, 5, `Острота «${i.name}»`) : undefined, vis: i.vis,
       c: /^#[0-9a-fA-F]{6}$/.test(i.c) ? i.c : '#C98A3E', c2: /^#[0-9a-fA-F]{6}$/.test(i.c2) ? i.c2 : undefined, hidden: !!i.hidden,
@@ -308,35 +386,58 @@ function validateMenu(m, prev) {
     for (const k of ['seeds', 'spots']) if (i[k]) out[k] = String(i[k]).slice(0, 10);
     return out;
   });
-  // Ингредиенты нельзя удалять или переставлять: по их порядку кодируются ссылки на рецепты. Можно скрыть.
-  prev.ingredients.forEach((p, n) => { if (ingredients[n]?.id !== p.id) fail(400, `Ингредиент «${p.name}» нельзя удалить или переместить — скройте его`); });
-  const extras = m.extras.map((u) => {
-    if (!idOk(u.id)) fail(400, `Неверный код позиции: ${u.id}`);
-    return { id: u.id, name: str(u.name, 40, 'название'), note: str(u.note, 60, 'описание', false), price: num(u.price, 0, 10_000_000, `Цена «${u.name}»`), icon: iconOk(u.icon) ? u.icon : 'restaurant', w: num(u.w || 0, 0, 5000, 'Вес'), kcal: num(u.kcal || 0, 0, 10000, 'Калории'), hidden: !!u.hidden };
+  prev.ingredients.forEach((p, n) => { if (ingredients[n]?.id !== p.id) fail(400, `Ингредиент «${p.name}» нельзя переместить — удалите его кнопкой удаления`); });
+  const live = new Set(ingredients.filter((i) => !i.deleted).map((i) => i.id));
+  const productCats = m.productCats.map((c) => {
+    if (!idOk(c.id)) fail(400, `Неверный код раздела: ${c.id}`);
+    return { id: c.id, name: str(c.name, 30, 'название раздела'), nameUz: str(c.nameUz, 30, 'nameUz', false) || undefined, icon: iconOk(c.icon) ? c.icon : 'restaurant', hidden: !!c.hidden };
   });
-  const party = m.party.map((p) => {
-    if (!idOk(p.id)) fail(400, `Неверный код Party: ${p.id}`);
-    return { id: p.id, people: num(p.people, 2, 100, 'Гостей'), weight: num(p.weight, 100, 100000, 'Вес'), price: num(p.price, 0, 100_000_000, 'Цена'), len: num(p.len, 10, 500, 'Длина'), hidden: !!p.hidden };
+  const pcIds = productCats.map((c) => c.id);
+  const products = m.products.map((p) => {
+    if (!idOk(p.id)) fail(400, `Неверный код позиции: ${p.id}`);
+    if (!pcIds.includes(p.cat)) fail(400, `«${p.name}»: раздел меню не найден`);
+    const keys = Array.isArray(p.keys) ? p.keys.filter((k) => typeof k === 'string' && live.has(k.split(':').pop())).slice(0, 60) : [];
+    return {
+      id: p.id, cat: p.cat, name: str(p.name, 50, 'название'), nameUz: str(p.nameUz, 50, 'nameUz', false) || undefined,
+      note: str(p.note, 100, 'описание', false), noteUz: str(p.noteUz, 100, 'noteUz', false) || undefined,
+      price: num(p.price, 0, 10_000_000, `Цена «${p.name}»`), w: num(p.w || 0, 0, 10000, 'Вес'), kcal: num(p.kcal || 0, 0, 20000, 'Калории'),
+      icon: iconOk(p.icon) ? p.icon : undefined, keys: keys.length ? keys : undefined, hit: !!p.hit, spicy: !!p.spicy, hidden: !!p.hidden,
+    };
   });
-  const all = [...ingredients, ...extras, ...party].map((x) => x.id);
+  const all = [...ingredients, ...products].map((x) => x.id);
   if (new Set(all).size !== all.length) fail(400, 'Коды позиций должны быть уникальными');
-  return { categories, ingredients, extras, party };
+  return { categories, ingredients, productCats, products };
 }
 
 function diffMenu(a, b) {
   const out = [];
-  for (const key of ['categories', 'ingredients', 'extras', 'party']) {
-    for (const x of b[key]) {
-      const y = a[key].find((z) => z.id === x.id);
-      const name = x.name || `Party ${x.people}`;
-      if (!y) { out.push(`добавлено: ${name}`); continue; }
-      for (const f of ['name', 'price', 'w', 'kcal', 'hidden', 'people']) {
-        if (y[f] !== x[f] && !(y[f] == null && !x[f])) out.push(`${name}: ${f === 'hidden' ? (x.hidden ? 'скрыто' : 'показано') : `${f} ${y[f] ?? '—'} → ${x[f]}`}`);
+  for (const key of ['categories', 'ingredients', 'productCats', 'products']) {
+    for (const x of b[key] || []) {
+      const y = (a[key] || []).find((z) => z.id === x.id);
+      if (!y) { out.push(`добавлено: ${x.name}`); continue; }
+      if (x.deleted && !y.deleted) { out.push(`удалено: ${y.name}`); continue; }
+      for (const f of ['name', 'price', 'w', 'kcal', 'hidden', 'hit', 'spicy']) {
+        if (y[f] !== x[f] && !(y[f] == null && !x[f])) out.push(`${x.name}: ${f === 'hidden' ? (x.hidden ? 'скрыто' : 'показано') : f === 'hit' ? (x.hit ? 'хит продаж' : 'не хит') : f === 'spicy' ? (x.spicy ? 'есть выбор остроты' : 'без выбора остроты') : `${f} ${y[f] ?? '—'} → ${x[f]}`}`);
       }
     }
-    for (const y of a[key]) if (!b[key].find((z) => z.id === y.id)) out.push(`удалено: ${y.name || `Party ${y.people}`}`);
+    for (const y of a[key] || []) if (!(b[key] || []).find((z) => z.id === y.id)) out.push(`удалено: ${y.name}`);
   }
   return out.slice(0, 40).join('; ') || 'без изменений';
+}
+
+// ── Проверка промокода ──
+function validatePromo(b, prev) {
+  const code = String(b.code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9_-]{3,20}$/.test(code)) fail(400, 'Код: 3–20 символов, латинские буквы, цифры, _ и -');
+  const type = b.type === 'fixed' ? 'fixed' : 'percent';
+  const value = type === 'percent' ? num(b.value, 1, 100, 'Скидка, %') : num(b.value, 100, 10_000_000, 'Скидка, сум');
+  const expiresAt = b.expiresAt ? Number(b.expiresAt) : null;
+  if (expiresAt != null && !Number.isFinite(expiresAt)) fail(400, 'Неверная дата окончания');
+  return {
+    code, type, value, minOrder: num(b.minOrder || 0, 0, 100_000_000, 'Заказ от'), maxDiscount: type === 'percent' ? num(b.maxDiscount || 0, 0, 100_000_000, 'Скидка не больше') : 0,
+    maxUses: num(b.maxUses || 0, 0, 1_000_000, 'Всего использований'), perUser: num(b.perUser ?? 1, 0, 1000, 'На одного клиента'), firstOrder: !!b.firstOrder,
+    expiresAt, active: b.active !== false, note: str(b.note, 80, 'описание', false), createdAt: prev?.createdAt || Date.now(),
+  };
 }
 
 // ── Проверка настроек ──
@@ -373,7 +474,13 @@ function validateSettings(s) {
     modes,
     pickupAddress: str(s.pickupAddress, 160, 'адрес самовывоза'),
     hallTables: num(s.hallTables, 1, 500, 'Количество столов'),
-    partyCustom: !!s.partyCustom,
+    referral: {
+      enabled: !!s.referral?.enabled,
+      inviterBonus: num(s.referral?.inviterBonus ?? 0, 0, 100000, 'Бонус пригласившему'),
+      inviteeBonus: num(s.referral?.inviteeBonus ?? 0, 0, 100000, 'Бонус приглашённому'),
+      rate: num(s.referral?.rate ?? 1000, 1, 1_000_000, 'Курс котлетки'),
+      maxPercent: num(s.referral?.maxPercent ?? 50, 0, 100, 'Оплата котлетками, %'),
+    },
     limits: {
       minFillings: num(L.minFillings, 0, 50, 'Минимум начинок'),
       maxLayers: num(L.maxLayers, 3, 300, 'Максимум слоёв'),
@@ -428,6 +535,12 @@ function report(list) {
     avgTotalMin: avg(vals((o) => span(o, 'created', 'done'))),
     late,
     topItems: Object.entries(items).sort((a, b) => b[1] - a[1]).slice(0, 10),
+    promoOrders: ok.filter((o) => o.promo?.code).length,
+    promoDiscount: ok.reduce((s, o) => s + (o.discount || 0), 0),
+    promos: Object.entries(ok.reduce((acc, o) => { if (o.promo?.code) { const x = (acc[o.promo.code] ||= { count: 0, discount: 0 }); x.count++; x.discount += o.discount || 0; } return acc; }, {})).sort((a, b) => b[1].count - a[1].count),
+    cutletOrders: ok.filter((o) => o.cutletsUsed > 0).length,
+    cutletSum: ok.reduce((s, o) => s + (o.cutletsSum || 0), 0),
+    byPayment: Object.fromEntries(Object.keys(PAYMENTS).map((k) => { const l = ok.filter((o) => (o.payment || 'cash') === k); return [k, { count: l.length, revenue: l.reduce((s, o) => s + o.total, 0) }]; })),
   };
 }
 

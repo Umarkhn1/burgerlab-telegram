@@ -1,10 +1,10 @@
 // Касса и админ-панель BurgerLab: страница /staff (вход по логину) и раздел «Админ» внутри Mini App
 // (embedded: вход по подписи Telegram для ADMIN_IDS). Стиль и компоненты — как в Mini App.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { STATUSES, MODES, CANCEL_REASONS, STOP, applyMenu, applySettings, applyStop } from './data.js';
+import { STATUSES, MODES, CANCEL_REASONS, STOP, PAYMENTS, applyMenu, applySettings, applyStop } from './data.js';
 import { fmtPrice, fmtTime, fmtDateTime, fmtWeight, fmtCm, layerName, flowOf, nextStatus, isClosed, deadlines, statusInfo, atTime } from './calc.js';
 import { Sheet, Toasts, Icon } from './ui.jsx';
-import { PageHead, Switch, StopList, History, Reports, MenuEditor, Settings, Delivery, Staff, Audit } from './staffAdmin.jsx';
+import { PageHead, Switch, StopList, History, Reports, MenuEditor, Settings, Delivery, Staff, Audit, Promos, CookCode } from './staffAdmin.jsx';
 
 const SESSION_KEY = 'burgerlab:staff';
 const SOUND_KEY = 'burgerlab:staff-sound';
@@ -15,17 +15,20 @@ const NEW = ['created', 'received'];
 // Разделы меню. perm — право, без которого раздел не показывается.
 const SECTIONS = [
   { id: 'desk', t: 'Касса', icon: 'point_of_sale', perm: 'orders', group: 'Работа' },
+  { id: 'kitchen', t: 'Кухня', icon: 'soup_kitchen', perm: 'kitchen', group: 'Работа' },
   { id: 'stop', t: 'Стоп-лист', icon: 'block', perm: 'stop', group: 'Работа' },
   { id: 'history', t: 'Заказы', icon: 'receipt_long', perm: 'history', group: 'Работа' },
   { id: 'reports', t: 'Отчёты', icon: 'bar_chart', perm: 'reports', group: 'Управление' },
   { id: 'menu', t: 'Меню и цены', icon: 'restaurant_menu', perm: 'menu', group: 'Управление' },
+  { id: 'promos', t: 'Промокоды', icon: 'sell', perm: 'promos', group: 'Управление' },
   { id: 'settings', t: 'Настройки', icon: 'tune', perm: 'settings', group: 'Управление' },
   { id: 'delivery', t: 'Доставка', icon: 'delivery_dining', perm: 'settings', group: 'Управление' },
   { id: 'staff', t: 'Сотрудники', icon: 'group', perm: 'staff', group: 'Управление' },
+  { id: 'cookcode', t: 'Код для повара', icon: 'key', perm: 'staff', group: 'Управление' },
   { id: 'audit', t: 'Журнал', icon: 'history', perm: 'audit', group: 'Управление' },
 ];
-const ROLE_NAMES = { admin: 'Администратор', cashier: 'Кассир' };
-export const PANEL_T = { admin: 'Админ', cashier: 'Касса' };
+const ROLE_NAMES = { admin: 'Администратор', cashier: 'Кассир', cook: 'Повар' };
+export const PANEL_T = { admin: 'Админ', cashier: 'Касса', cook: 'Кухня' };
 
 async function request(path, { method = 'GET', body, token, initData } = {}) {
   let res;
@@ -97,7 +100,8 @@ function Logo() {
 
 // ── Вход ──
 function Login({ onLogin, theme, setTheme }) {
-  const [f, setF] = useState({ login: '', password: '' });
+  const [mode, setMode] = useState(() => (/[?&]cook/.test(location.search) ? 'cook' : 'staff'));
+  const [f, setF] = useState({ login: '', password: '', name: read('burgerlab:cook-name', ''), code: '' });
   const [show, setShow] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -105,8 +109,10 @@ function Login({ onLogin, theme, setTheme }) {
     e.preventDefault();
     unlockAudio();
     setBusy(true); setErr('');
-    try { onLogin(await request('/staff/login', { method: 'POST', body: f })); }
-    catch (x) { setErr(x.message); }
+    try {
+      if (mode === 'cook') { store('burgerlab:cook-name', f.name.trim()); onLogin(await request('/staff/cook-login', { method: 'POST', body: { code: f.code, name: f.name } })); }
+      else onLogin(await request('/staff/login', { method: 'POST', body: { login: f.login, password: f.password } }));
+    } catch (x) { setErr(x.message); }
     setBusy(false);
   };
   return (
@@ -115,9 +121,19 @@ function Login({ onLogin, theme, setTheme }) {
       <form className="st-login-card" onSubmit={submit}>
         <Logo />
         <div>
-          <h1>Касса и админ-панель</h1>
-          <p className="muted-t">Вход для сотрудников BurgerLab</p>
+          <h1>{mode === 'cook' ? 'Кухня' : 'Касса и админ-панель'}</h1>
+          <p className="muted-t">{mode === 'cook' ? 'Код из 6 цифр покажет администратор — он меняется каждую минуту' : 'Вход для сотрудников BurgerLab'}</p>
         </div>
+        <div className="seg sm login-seg">
+          <button type="button" className={mode === 'staff' ? 'on' : ''} onClick={() => { setMode('staff'); setErr(''); }}><Icon name="badge" />Сотрудник</button>
+          <button type="button" className={mode === 'cook' ? 'on' : ''} onClick={() => { setMode('cook'); setErr(''); }}><Icon name="soup_kitchen" />Повар</button>
+        </div>
+        {mode === 'cook' ? (
+          <>
+            <label className="fld"><span>Ваше имя</span><div className="in-wrap"><Icon name="person" /><input className="in" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={30} placeholder="Например, Азиз" /></div></label>
+            <label className="fld"><span>Код от администратора</span><input className="in code-in" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value.replace(/\D/g, '').slice(0, 6) })} inputMode="numeric" autoComplete="one-time-code" placeholder="••••••" autoFocus /></label>
+          </>
+        ) : (<>
         <label className="fld">
           <span>Логин</span>
           <div className="in-wrap"><Icon name="account_circle" /><input className="in" value={f.login} onChange={(e) => setF({ ...f, login: e.target.value })} autoComplete="username" autoFocus /></div>
@@ -130,15 +146,16 @@ function Login({ onLogin, theme, setTheme }) {
             <button type="button" className="in-act" onClick={() => setShow(!show)} aria-label={show ? 'Скрыть пароль' : 'Показать пароль'} title={show ? 'Скрыть пароль' : 'Показать пароль'}><Icon name={show ? 'visibility_off' : 'visibility'} /></button>
           </div>
         </label>
+        </>)}
         {err && <p className="st-err"><Icon name="error" /> {err}</p>}
-        <button className="btn primary block" disabled={busy || !f.login || !f.password}>{busy ? 'Входим…' : 'Войти'}</button>
+        <button className="btn primary block" disabled={busy || (mode === 'cook' ? f.code.length !== 6 : !f.login || !f.password)}>{busy ? 'Входим…' : mode === 'cook' ? 'Начать смену' : 'Войти'}</button>
       </form>
     </div>
   );
 }
 
 // ── Выпадающее меню ──
-function MenuDropdown({ open, onClose, user, view, setView, badges, sound, setSound, theme, setTheme, logout, embedded }) {
+function MenuDropdown({ open, onClose, user, view, setView, badges, sound, setSound, theme, setTheme, logout, embedded, onClientMode }) {
   useEffect(() => {
     if (!open) return;
     const key = (e) => e.key === 'Escape' && onClose();
@@ -180,7 +197,8 @@ function MenuDropdown({ open, onClose, user, view, setView, badges, sound, setSo
             </div>
           </div>}
         </div>
-        {!embedded && <button className="st-mi danger" onClick={logout}><Icon name="logout" /><span>Выйти</span></button>}
+        {onClientMode && <button className="st-mi" onClick={() => { onClose(); onClientMode(); }}><Icon name="storefront" /><span>Открыть как клиент</span></button>}
+        {!embedded && <button className="st-mi danger" onClick={logout}><Icon name="logout" /><span>{user.role === 'cook' ? 'Завершить смену' : 'Выйти'}</span></button>}
       </div>
     </>
   );
@@ -197,7 +215,7 @@ function Timer({ o, now }) {
     const left = d.readyBy - now;
     return <span className={`oc-timer ${left < 0 ? 'late' : ''}`}><Icon name="timer" />{left < 0 ? `+${mmss(-left)}` : `к ${fmtTime(d.readyBy)}`}</span>;
   }
-  if (o.mode === 'delivery' && ['ready', 'courier', 'delivering'].includes(o.status)) {
+  if (o.mode === 'delivery' && ['ready', 'delivering'].includes(o.status)) {
     return <span className={`oc-timer ${now > d.doneBy ? 'late' : ''}`}><Icon name="two_wheeler" />{now > o.etaAt ? `+${mmss(now - o.etaAt)}` : `к ${fmtTime(o.etaAt)}`}</span>;
   }
   if (o.status === 'ready') return <span className="oc-timer ok"><Icon name="check_circle" />{o.statusAt?.ready ? fmtTime(o.statusAt.ready) : 'готов'}</span>;
@@ -215,18 +233,25 @@ function Items({ o, open }) {
     <ul className="oc-items">
       {o.items.map((it, n) => (
         <li key={it.cid || n}>
-          <div className="oc-item"><span className="q">{it.qty}×</span><span className="nm">{it.name}</span><b>{fmtPrice(it.unit * it.qty)}</b></div>
+          <div className="oc-item"><span className="q">{it.qty}×</span><span className="nm">{it.name}{it.spicy && <em className="hot-tag">🌶 острый</em>}</span><b>{fmtPrice(it.unit * it.qty)}</b></div>
           {it.kind === 'burger' && (
             <>
               <small>{fmtWeight(it.weight)} · {fmtCm(it.cm)} · {it.count} слоёв{it.packaging ? ' · спецупаковка' : ''}</small>
               {open && <ol className="oc-layers">{it.keys.map((k, i) => <li key={i}>{layerName(k)}</li>)}</ol>}
             </>
           )}
-          {it.kind === 'party' && <small>~{fmtWeight(it.weight)} · на {it.people} человек</small>}
+          {it.kind !== 'burger' && it.keys?.length > 0 && open && <ol className="oc-layers">{it.keys.map((k, i) => <li key={i}>{layerName(k)}</li>)}</ol>}
         </li>
       ))}
     </ul>
   );
+}
+
+// Способ оплаты: Click / Payme показывают, оплачен ли заказ
+export function PayChip({ o }) {
+  const p = PAYMENTS[o.payment] || PAYMENTS.cash;
+  if (p.online) return <span className={`pay-chip ${o.paid ? 'ok' : 'wait'}`}><Icon name={o.paid ? 'check_circle' : 'hourglass_top'} />{p.t} · {o.paid ? 'оплачено' : 'ждёт оплаты'}</span>;
+  return <span className="pay-chip"><Icon name={p.icon} />{o.payment === 'cash' ? 'Наличные' : o.mode === 'hall' ? 'Карта на кассе' : 'Карта курьеру'}</span>;
 }
 
 // ── Карточка заказа на кассе ──
@@ -261,7 +286,7 @@ function OrderCard({ o, now, act, openOrder, fresh }) {
       )}
       {o.comment && <p className="oc-comment"><Icon name="forum" />{o.comment}</p>}
       <div className="oc-foot">
-        <span><Icon name={o.payment === 'cash' ? 'payments' : 'credit_card'} />{o.payment === 'cash' ? 'Наличные' : 'Карта'}{o.fee ? ` · доставка ${fmtPrice(o.fee)}` : ''}</span>
+        <span><PayChip o={o} />{o.fee ? ` · доставка ${fmtPrice(o.fee)}` : ''}</span>
         <b>{fmtPrice(o.total)}</b>
       </div>
       {o.status === 'cancelled' && <p className="oc-cancel"><Icon name="cancel" />{o.cancelReason}</p>}
@@ -338,14 +363,18 @@ function OrderSheet({ id, onClose, api, user, act, toast, rev }) {
               {o.zone && <Row icon="map" k="Зона">{o.zone.name}{o.zone.km != null ? ` · ${o.zone.km} км` : ''}</Row>}
               {o.desiredAt && <Row icon="schedule" k="Ко времени">{fmtTime(o.desiredAt)}</Row>}
               {!isClosed(o) && <Row icon="timer" k="Получение">≈ {fmtTime(o.etaAt)}{o.etaManual ? ' (вручную)' : ''}</Row>}
-              <Row icon={o.payment === 'cash' ? 'payments' : 'credit_card'} k="Оплата">{o.payment === 'cash' ? 'Наличные' : 'Карта'}</Row>
+              <Row icon="payments" k="Оплата"><PayChip o={o} /></Row>
+              {o.promo?.code && <Row icon="sell" k="Промокод">{o.promo.code} · −{fmtPrice(o.discount)}</Row>}
+              {o.cutletsUsed > 0 && <Row icon="redeem" k="Котлетки">{o.cutletsUsed} · −{fmtPrice(o.cutletsSum)}{o.cutletsRefunded ? ' (возвращены)' : ''}</Row>}
               {o.comment && <p className="oc-comment"><Icon name="forum" />{o.comment}</p>}
               {o.status === 'cancelled' && <p className="oc-cancel"><Icon name="cancel" />{o.cancelReason}{o.cancelledBy ? ` — ${o.cancelledBy}` : ''}</p>}
             </div>
             <div className="card flat">
               <Items o={o} open />
+              {o.discount > 0 && <div className="kv"><span>Промокод {o.promo?.code}</span><b>−{fmtPrice(o.discount)}</b></div>}
               {o.fee > 0 && <div className="kv"><span>Доставка</span><b>{fmtPrice(o.fee)}</b></div>}
-              <div className="kv total"><span>Итого</span><b>{fmtPrice(o.total)}</b></div>
+              {o.cutletsSum > 0 && <div className="kv"><span>Котлетки</span><b>−{fmtPrice(o.cutletsSum)}</b></div>}
+              <div className="kv total"><span>К оплате</span><b>{fmtPrice(o.total)}</b></div>
             </div>
           </div>
 
@@ -391,7 +420,7 @@ const COLS = [
   { id: 'new', t: 'Новые', icon: 'notifications_active', st: NEW },
   { id: 'work', t: 'Готовятся', icon: 'cooking', st: ['accepted', 'cooking'] },
   { id: 'ready', t: 'Готовы', icon: 'lunch_dining', st: ['ready'] },
-  { id: 'road', t: 'У курьера', icon: 'two_wheeler', st: ['courier', 'delivering'] },
+  { id: 'road', t: 'Доставляются', icon: 'two_wheeler', st: ['delivering'] },
 ];
 
 function Desk({ orders, now, act, openOrder, freshIds }) {
@@ -437,12 +466,72 @@ function Desk({ orders, now, act, openOrder, freshIds }) {
   );
 }
 
+// ── Кухня: только то, что готовится. Слои крупно, острота и комментарий заметно. ──
+function KitchenTicket({ o, now, act }) {
+  const [done, setDone] = useState({});
+  const d = deadlines(o);
+  const late = o.status !== 'ready' && now > d.readyBy;
+  return (
+    <article className={`kt st-${o.status} ${late ? 'late' : ''}`}>
+      <header>
+        <b>#{o.id}</b>
+        <ModeChip o={o} />
+        <span className={`oc-timer ${late ? 'late' : ''}`}><Icon name="timer" />{late ? `+${mmss(now - d.readyBy)}` : `к ${fmtTime(d.readyBy)}`}</span>
+      </header>
+      {o.items.map((it, n) => (
+        <section key={it.cid || n} className="kt-item">
+          <h4>{it.qty > 1 && <span className="q">{it.qty}×</span>}{it.name}{it.spicy ? <em className="hot-tag big">🌶 ОСТРЫЙ</em> : it.spicy === false ? <em className="mild-tag">не острый</em> : null}</h4>
+          {it.keys?.length > 0 && (
+            <ol className="kt-layers">
+              {it.keys.map((k, i) => {
+                const id = `${n}-${i}`;
+                return <li key={id}><button className={done[id] ? 'on' : ''} onClick={() => setDone((x) => ({ ...x, [id]: !x[id] }))}><span className="tick">{done[id] ? <Icon name="check" /> : i + 1}</span>{layerName(k)}</button></li>;
+              })}
+            </ol>
+          )}
+          {it.packaging > 0 && <small className="kt-note"><Icon name="inventory_2" />Спецупаковка</small>}
+        </section>
+      ))}
+      {o.comment && <p className="oc-comment"><Icon name="forum" />{o.comment}</p>}
+      <div className="kt-act">
+        {o.status === 'accepted' && <button className="btn primary block" onClick={() => act(o, 'cooking')}><Icon name="cooking" />Начать готовить</button>}
+        {o.status === 'cooking' && <button className="btn block kt-ready" onClick={() => act(o, 'ready')}><Icon name="check" />Готово</button>}
+      </div>
+    </article>
+  );
+}
+
+function Kitchen({ orders, now, act }) {
+  const queue = orders.filter((o) => o.status === 'accepted').sort((a, b) => a.id - b.id);
+  const cooking = orders.filter((o) => o.status === 'cooking').sort((a, b) => a.id - b.id);
+  const ready = orders.filter((o) => o.status === 'ready').sort((a, b) => b.id - a.id).slice(0, 6);
+  return (
+    <>
+      <PageHead title="Кухня" sub="Заказы появляются здесь после того, как касса их примет" />
+      <div className="desk-cols kitchen-cols">
+        {[['Очередь', 'pending_actions', queue], ['Готовятся', 'cooking', cooking]].map(([title, icon, list]) => (
+          <section key={title} className="desk-col">
+            <h2><Icon name={icon} />{title}<span className="cnt">{list.length}</span></h2>
+            {list.length === 0 && <div className="desk-empty">Пусто</div>}
+            {list.map((o) => <KitchenTicket key={o.id} o={o} now={now} act={act} />)}
+          </section>
+        ))}
+        <section className="desk-col">
+          <h2><Icon name="lunch_dining" />Готовы<span className="cnt">{ready.length}</span></h2>
+          {ready.length === 0 && <div className="desk-empty">Пусто</div>}
+          {ready.map((o) => <div key={o.id} className="closed-row"><Icon name="check_circle" className="ok" /><span><b>#{o.id}</b><small>{o.items.map((i) => `${i.qty > 1 ? `${i.qty}× ` : ''}${i.name}`).join(', ')}</small></span><em>{o.statusAt?.ready ? fmtTime(o.statusAt.ready) : ''}</em></div>)}
+        </section>
+      </div>
+    </>
+  );
+}
+
 function Clock() {
   const now = useNow(10000);
   return <span className="st-clock">{fmtTime(now)}</span>;
 }
 
-export function StaffApp({ embedded = false, initData = '' }) {
+export function StaffApp({ embedded = false, initData = '', onClientMode }) {
   const [theme, setTheme] = useTheme(embedded);
   // embedded: сессия — это подпись Telegram, пользователь приходит из /staff/me
   const [session, setSession] = useState(() => (embedded ? { token: '', user: null } : loadSession()));
@@ -507,11 +596,11 @@ export function StaffApp({ embedded = false, initData = '' }) {
 
   // Синхронизация с сервером каждые 3 секунды. Касса получает новые заказы и отмечает их «Заказ на кассе».
   useEffect(() => {
-    if ((!embedded && !session?.token) || !user?.perms.includes('orders')) return;
+    if ((!embedded && !session?.token) || !(user?.perms.includes('orders') || user?.perms.includes('kitchen'))) return;
     let stop = false;
     const tick = async () => {
       try {
-        const d = await api(`/staff/sync?desk=1&rev=${revRef.current}`);
+        const d = await api(`/staff/sync?desk=${user.perms.includes('orders') ? 1 : 0}&rev=${revRef.current}`);
         if (stop) return;
         setOnline(true);
         if (d.confRev !== cfgRef.current) reloadConfig().catch(() => {});
@@ -540,7 +629,7 @@ export function StaffApp({ embedded = false, initData = '' }) {
   }, [session?.token, user?.perms?.join()]);
 
   // Пока есть непринятые заказы — сигнал каждые 8 секунд и счётчик во вкладке браузера
-  const waiting = orders.filter((o) => NEW.includes(o.status)).length;
+  const waiting = orders.filter((o) => (user?.role === 'cook' ? o.status === 'accepted' : NEW.includes(o.status))).length;
   useEffect(() => {
     if (!embedded) document.title = waiting ? `(${waiting}) Новые заказы — BurgerLab` : 'BurgerLab — касса';
     if (!waiting || !sound) return;
@@ -595,18 +684,21 @@ export function StaffApp({ embedded = false, initData = '' }) {
         {!embedded && <Logo />}
         <span className="st-sec"><Icon name={sec.icon} />{sec.t}</span>
         <div className="st-bar-r">
-          {waiting > 0 && <button className="st-alert" onClick={() => setView('desk')}><Icon name="notifications_active" fill />{waiting}<span className="hide-s">&nbsp;{waiting === 1 ? 'новый' : 'новых'}</span></button>}
+          {waiting > 0 && <button className="st-alert" onClick={() => setView(user.role === 'cook' ? 'kitchen' : 'desk')}><Icon name="notifications_active" fill />{waiting}<span className="hide-s">&nbsp;{waiting === 1 ? 'новый' : 'новых'}</span></button>}
           <span className={`st-net ${online ? '' : 'off'}`} title={online ? 'Связь с сервером есть' : 'Нет связи с сервером'}><i />{online ? 'онлайн' : 'нет связи'}</span>
           {!embedded && <Clock />}
           <button className={`icon-btn st-burger ${menuOpen ? 'on' : ''}`} onClick={() => setMenuOpen(!menuOpen)} aria-label="Меню" aria-expanded={menuOpen}><Icon name={menuOpen ? 'close' : 'menu'} /></button>
           <MenuDropdown open={menuOpen} onClose={() => setMenuOpen(false)} user={user} view={view} setView={setView}
-            badges={{ desk: waiting, stop: stopCount }} sound={sound} setSound={setSound} theme={theme} setTheme={setTheme} logout={logout} embedded={embedded} />
+            badges={{ desk: user.role === 'cook' ? 0 : waiting, kitchen: orders.filter((o) => o.status === 'accepted').length, stop: stopCount }} sound={sound} setSound={setSound} theme={theme} setTheme={setTheme} logout={logout} embedded={embedded} onClientMode={onClientMode} />
         </div>
       </header>
       {!online && <div className="st-offline"><Icon name="wifi_off" />Нет связи с сервером. Заказы не потеряются: касса получит их, как только связь восстановится.</div>}
       <main className="st-main">
         <div className="st-page">
           {view === 'desk' && <Desk orders={orders} now={now} act={act} openOrder={setOpenId} freshIds={freshIds} />}
+          {view === 'kitchen' && <Kitchen orders={orders} now={now} act={act} />}
+          {view === 'promos' && <Promos {...P} />}
+          {view === 'cookcode' && <CookCode {...P} />}
           {view === 'stop' && <StopList {...P} />}
           {view === 'history' && <History {...P} />}
           {view === 'reports' && <Reports {...P} />}
