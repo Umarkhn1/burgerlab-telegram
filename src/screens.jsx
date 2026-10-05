@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from './ctx.js';
-import { CHALLENGES, SIZE_PRESETS, STOP, SETTINGS, PRODUCTS, PRODUCT_CATS } from './data.js';
-import { stats, toLayers, fmtPrice, fmtWeight, fmtKcal, fmtCm, challengeProgress, statusInfo, productInfo, approx, cutletsSum } from './calc.js';
+import { SIZE_PRESETS, STOP, SETTINGS, PRODUCTS, PRODUCT_CATS } from './data.js';
+import { stats, toLayers, fmtPrice, fmtWeight, fmtKcal, fmtCm, statusInfo, productInfo, approx, cutletsSum } from './calc.js';
 import { BurgerStack, ProductArt } from './visuals.jsx';
 import { inTelegram, haptic, getThemePref, setThemePref, CONFIG, shareToTelegram } from './telegram.js';
 import { t, tn, nm, LANGS, getLang } from './i18n.js';
@@ -184,36 +184,6 @@ export function Menu({ initialCat }) {
   );
 }
 
-export function Challenges() {
-  const { S, A } = useApp();
-  const st = stats(S.layers);
-  return (
-    <div className="page">
-      <ScreenHead title="Burger Challenge" sub={t('Выполни условие, сохрани рецепт — и бейдж твой. Прогресс считается по бургеру в конструкторе.')} onBack={() => A.back()} />
-      <div className="ch-grid">
-        {CHALLENGES.map((c) => {
-          const p = challengeProgress(st, c.id);
-          const pct = Math.min(100, (p / c.target) * 100);
-          const got = S.badges[c.id];
-          return (
-            <article key={c.id} className={`ch-card ${got ? 'got' : ''}`}>
-              <div className="ch-top">
-                <span className="ch-ico"><Icon name={c.icon} /></span>
-                {got ? <span className="badge-got">{t('Бейдж получен')}</span> : <span className="muted-t">{t('Текущий бургер')}</span>}
-              </div>
-              <h3>{c.title}</h3>
-              <p>{t(c.goal)}</p>
-              <div className="bar"><i style={{ width: `${pct}%` }} /></div>
-              <div className="ch-prog">{Math.round(p).toLocaleString('ru-RU')} / {c.target.toLocaleString('ru-RU')} {t(c.unit)}</div>
-              <button className={`btn ${got ? 'outline' : 'primary'} block`} onClick={() => A.startChallenge(c.id)}>{got ? t('Собрать ещё') : t('Принять вызов')}</button>
-            </article>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 export function SavedCard({ r }) {
   const { A } = useApp();
   const st = useMemo(() => stats(toLayers(r.layers)), [r.layers]);
@@ -341,22 +311,12 @@ export function Profile({ focus }) {
         </>
       )}
 
-      <h2 className="sec-title">{t('Бейджи')}</h2>
-      <div className="badges">
-        {CHALLENGES.map((c) => (
-          <div key={c.id} className={`badge ${S.badges[c.id] ? 'on' : ''}`} title={t(c.goal)}>
-            <span><Icon name={c.icon} /></span><small>{c.title}</small>
-          </div>
-        ))}
-      </div>
-
       <h2 className="sec-title">{t('Разделы')}</h2>
       <div className="menu-list">
         <button onClick={() => A.go('saved')}><span><Icon name="bookmark" /> {t('Мои бургеры')}</span><small>{S.saved.length}</small></button>
-        <button onClick={() => A.go('challenges')}><span><Icon name="emoji_events" /> Challenges</span><small>{Object.keys(S.badges).length}/{CHALLENGES.length}</small></button>
         {inTelegram && S.profile.admin && <button onClick={A.backToPanel}><span><Icon name="admin_panel_settings" /> {t('Вернуться в панель')}</span><small>{t('для сотрудников')}</small></button>}
         {!inTelegram && <button onClick={A.installHint}><span><Icon name="install_mobile" /> {t('Установить на телефон')}</span><small>PWA</small></button>}
-        <button className="danger" onClick={A.resetDemo}><span><Icon name="refresh" /> {t(inTelegram ? 'Очистить данные на устройстве' : 'Сбросить данные')}</span><small>{t('корзина, рецепты, бейджи')}</small></button>
+        <button className="danger" onClick={A.resetDemo}><span><Icon name="refresh" /> {t(inTelegram ? 'Очистить данные на устройстве' : 'Сбросить данные')}</span><small>{t('корзина и рецепты')}</small></button>
       </div>
     </div>
   );

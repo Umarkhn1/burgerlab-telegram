@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from './ctx.js';
-import { CATEGORIES, INGREDIENTS, ING, SIZE_PRESETS, CHALLENGES } from './data.js';
-import { stats, burgerType, fmtPrice, fmtWeight, fmtKcal, fmtCm, parseKey, layerLabel, layerMetrics, PACKAGING_CM, MODULE_CM, challengeProgress, isStopped, checkBurger, approx } from './calc.js';
+import { CATEGORIES, INGREDIENTS, ING, SIZE_PRESETS } from './data.js';
+import { stats, burgerType, fmtPrice, fmtWeight, fmtKcal, fmtCm, parseKey, layerLabel, layerMetrics, PACKAGING_CM, MODULE_CM, isStopped, checkBurger, approx } from './calc.js';
 import { t, tn, nm } from './i18n.js';
 import { BurgerStack, IngredientThumb } from './visuals.jsx';
 import { Num, Stepper, Sheet, Icon } from './ui.jsx';
@@ -240,23 +240,6 @@ function LayerList() {
   );
 }
 
-function ChallengeTicker({ st }) {
-  const { S } = useApp();
-  const near = CHALLENGES.map((c) => ({ c, p: challengeProgress(st, c.id) }))
-    .filter(({ c, p }) => !S.badges[c.id] && p > 0)
-    .sort((a, b) => b.p / b.c.target - a.p / a.c.target)[0];
-  if (!near) return null;
-  const done = near.p >= near.c.target;
-  const pct = Math.min(100, (near.p / near.c.target) * 100);
-  return (
-    <div className={`ticker ${done ? 'done' : ''}`}>
-      <Icon name={near.c.icon} />
-      <span className="ticker-t">{done ? `${near.c.title}: ${t('условие выполнено — сохрани рецепт, чтобы получить бейдж')}` : `${near.c.title}: ${Math.round(near.p).toLocaleString('ru-RU')} / ${near.c.target.toLocaleString('ru-RU')} ${t(near.c.unit)}`}</span>
-      <span className="ticker-bar"><i style={{ width: `${pct}%` }} /></span>
-    </div>
-  );
-}
-
 function ActionRow() {
   const { A } = useApp();
   return (
@@ -354,7 +337,6 @@ export default function Builder() {
         </aside>
         <section className="b-center">
           {stage}
-          <ChallengeTicker st={st} />
           <ActionRow />
         </section>
         <aside className="b-right">
@@ -387,7 +369,6 @@ export default function Builder() {
           <button role="tab" aria-selected={tab === 'ing'} className={tab === 'ing' ? 'on' : ''} onClick={() => setTab('ing')}>{t('Ингредиенты')}</button>
           <button role="tab" aria-selected={tab === 'layers'} className={tab === 'layers' ? 'on' : ''} onClick={() => setTab('layers')}>{t('Слои')} · {S.layers.length}</button>
         </div>
-        <ChallengeTicker st={st} />
         {tab === 'ing' ? (
           <IngredientPanel cat={cat} setCat={setCat} counts={counts} currentBun={currentBun} />
         ) : (

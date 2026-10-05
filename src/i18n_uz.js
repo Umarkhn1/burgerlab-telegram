@@ -2,6 +2,9 @@
 // Новые фразы: добавьте пару «русский текст»: «перевод». Без перевода показывается русский текст.
 export const UZ = {
  "к": "",
+ "Удалить корзину и сохранённые рецепты на этом устройстве?": "Ushbu qurilmadagi savat va saqlangan retseptlar o'chirilsinmi?",
+ "Удалить корзину, рецепты и заказы?": "Savat, retseptlar va buyurtmalar o'chirilsinmi?",
+ "корзина и рецепты": "savat va retseptlar",
  "Нет в наличии: {list}. Замени эти слои": "Mavjud emas: {list}. Bu qatlamlarni almashtiring",
  "Сырная башня": "Pishloq minorasi",
  "Огненный дракон": "Olovli ajdar",

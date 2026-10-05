@@ -133,13 +133,6 @@ export const PRODUCTS = [
   { id: 'up_dessert', cat: 'desserts', name: 'Чизкейк', nameUz: 'Chizkeyk', note: 'Нью-Йорк, 120 г', noteUz: "Nyu-York, 120 g", price: 16000, icon: 'cake', w: 120, kcal: 390 },
 ];
 
-export const CHALLENGES = [
-  { id: 'cheese', title: 'Cheese Monster', icon: 'change_history', goal: 'Собери бургер минимум с 10 слоями сыра', target: 10, unit: 'слоёв сыра' },
-  { id: 'meat', title: 'Meat King', icon: 'workspace_premium', goal: 'Минимум 5 котлет в одном бургере', target: 5, unit: 'котлет' },
-  { id: 'giant', title: 'Giant Week', icon: 'fitness_center', goal: 'Бургер весом больше 2 кг', target: 2000, unit: 'г' },
-  { id: 'hot', title: 'Hot Challenge', icon: 'local_fire_department', goal: 'Набери 15 очков остроты', target: 15, unit: 'очков остроты' },
-];
-
 // ── Единый справочник статусов заказа (приложение, касса, бот) ──
 // ms — иконка в интерфейсе, icon — эмодзи для сообщений бота
 export const STATUSES = {

@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AppCtx } from './ctx.js';
-import { ING, SIZE_PRESETS, DEFAULT_LAYERS, CHALLENGES, STOP, PROD, applyMenu, applySettings, applyStop } from './data.js';
-import { toLayers, uid, stats, insertIndexFor, parseKey, randomBurger, fmtPrice, fmtWeight, fmtCm, fmtKcal, encodeRecipe, decodeRecipe, encodeShort, decodeShort, challengeProgress, canAddIng, checkBurger, isStopped, itemIssues, itemUnit, flowOf, isClosed, estimateEta, statusInfo, PACKAGING_FEE, approx } from './calc.js';
+import { ING, SIZE_PRESETS, DEFAULT_LAYERS, STOP, PROD, applyMenu, applySettings, applyStop } from './data.js';
+import { toLayers, uid, stats, insertIndexFor, parseKey, randomBurger, fmtPrice, fmtWeight, fmtCm, fmtKcal, encodeRecipe, decodeRecipe, encodeShort, decodeShort, canAddIng, checkBurger, isStopped, itemIssues, itemUnit, flowOf, isClosed, estimateEta, statusInfo, PACKAGING_FEE, approx } from './calc.js';
 import { tg, inTelegram, initTelegram, tgUser, startParam, haptic, setBackButton, miniAppLink, shareToTelegram, apiCreateOrder, apiGetOrder, apiConfig, apiMe, apiMyOrders, apiSetLang, apiRef, apiPay } from './telegram.js';
 import { t, tn, nm, setLang, getLang, langFromCode } from './i18n.js';
 import { Sheet, Toasts, Confetti, MiniBurger, Icon } from './ui.jsx';
 import Builder, { TypeBadge } from './builder.jsx';
-import { Home, Menu, Challenges, MyBurgers, Profile, ProductSheet } from './screens.jsx';
+import { Home, Menu, MyBurgers, Profile, ProductSheet } from './screens.jsx';
 import { Cart, Checkout, Tracking } from './commerce.jsx';
 import { StaffApp } from './staff.jsx';
 
@@ -23,7 +23,6 @@ const initial = () => ({
   saved: [],
   cart: [],
   orders: [],
-  badges: {},
   addresses: [],
   pending: null,
   table: null,
@@ -126,7 +125,7 @@ const NAV_DESK = [
   ['home', 'Главная', 'home'], ['builder', 'Конструктор', 'lunch_dining'], ['menu', 'Меню', 'restaurant_menu'],
   ['saved', 'Мои бургеры', 'bookmark'], ['cart', 'Корзина', 'shopping_bag'], ['profile', 'Профиль', 'person'],
 ];
-const TAB_OF = { challenges: 'profile', saved: 'profile', checkout: 'cart', tracking: 'profile' };
+const TAB_OF = { saved: 'profile', checkout: 'cart', tracking: 'profile' };
 
 // Нижняя навигация прячется, пока открыта клавиатура (иначе она перекрывает поля ввода)
 function useKeyboardOpen() {
@@ -462,13 +461,6 @@ function App() {
   const update = (fn) => setS((s) => ({ ...s, ...fn(s) }));
   const editLayers = (fn) => update((s) => ({ layers: fn(s.layers), sizeId: 'custom' }));
 
-  const checkBadges = (st, s) => {
-    const got = CHALLENGES.filter((c) => !s.badges[c.id] && challengeProgress(st, c.id) >= c.target);
-    if (!got.length) return s.badges;
-    setTimeout(() => { toast(`${t('Бейдж получен')}: ${got.map((c) => c.title).join(', ')}`, 'ok'); setConfetti(Date.now()); }, 500);
-    return { ...s.badges, ...Object.fromEntries(got.map((c) => [c.id, Date.now()])) };
-  };
-
   const burgerItem = (name, layers, author) => {
     const st = stats(layers);
     const keys = layers.filter((l) => !l.hidden).map((l) => l.key);
@@ -610,7 +602,7 @@ function App() {
       const r = { id: S.editingId || uid(), name, author: S.profile.name, layers: keys, createdAt: Date.now() };
       setS((s) => {
         const saved = s.editingId ? s.saved.map((x) => (x.id === s.editingId ? r : x)) : [r, ...s.saved];
-        return { ...s, saved, editingId: r.id, badges: checkBadges(st, s) };
+        return { ...s, saved, editingId: r.id };
       });
       setSaveOpen(false);
       setSavedResult(r);
@@ -630,14 +622,14 @@ function App() {
       // Редактировали бургер из корзины — обновляем ту же позицию (количество, название и острота сохраняются)
       const editing = S.editingCid && S.cart.find((c) => c.cid === S.editingCid);
       if (editing) {
-        setS((s) => ({ ...s, editingCid: null, cart: s.cart.map((c) => (c.cid === editing.cid ? { ...burgerItem(c.name, s.layers, c.author), cid: c.cid, qty: c.qty, spicy: c.spicy } : c)), badges: checkBadges(st, s) }));
+        setS((s) => ({ ...s, editingCid: null, cart: s.cart.map((c) => (c.cid === editing.cid ? { ...burgerItem(c.name, s.layers, c.author), cid: c.cid, qty: c.qty, spicy: c.spicy } : c))}));
         haptic('medium');
         go('cart');
         toast(t('«{name}» обновлён · {sum}', { name: editing.name, sum: fmtPrice(st.total) }), 'ok');
         return;
       }
       const name = S.saved.find((x) => x.id === S.editingId)?.name || t('Мой бургер №{n}', { n: S.cart.filter((c) => c.kind === 'burger').length + 1 });
-      setS((s) => ({ ...s, cart: [...s.cart, burgerItem(name, s.layers, s.profile.name)], badges: checkBadges(st, s) }));
+      setS((s) => ({ ...s, cart: [...s.cart, burgerItem(name, s.layers, s.profile.name)]}));
       haptic('medium');
       toast(t('«{name}» в корзине · {sum}', { name, sum: fmtPrice(st.total) }), 'ok');
     },
@@ -655,7 +647,6 @@ function App() {
       toast(t('«{name}» снова в корзине', r), 'ok');
     },
     deleteSaved: (id) => { update((s) => ({ saved: s.saved.filter((x) => x.id !== id), editingId: s.editingId === id ? null : s.editingId })); toast(t('Рецепт удалён')); },
-    startChallenge: (id) => { const c = CHALLENGES.find((x) => x.id === id); go('builder'); toast(t(c.goal)); },
     // ── Меню ──
     openProduct: (p) => setProduct(p),
     // Одинаковые товары с одинаковой остротой складываются в одну позицию
@@ -728,7 +719,7 @@ function App() {
     backToPanel: () => { setClientMode(false); hist.current = []; setRoute({ name: 'home', params: {} }); },
     // В Telegram профиль (имя, телефон, адрес из бота, права, котлетки) сохраняется — чистим только данные на устройстве
     resetDemo: () => {
-      if (!window.confirm(t(inTelegram ? 'Удалить корзину, сохранённые рецепты и бейджи на этом устройстве?' : 'Удалить корзину, рецепты, заказы и бейджи?'))) return;
+      if (!window.confirm(t(inTelegram ? 'Удалить корзину и сохранённые рецепты на этом устройстве?' : 'Удалить корзину, рецепты и заказы?'))) return;
       setS((s) => ({ ...initial(), lang: s.lang, ...(inTelegram ? { profile: s.profile, orders: s.orders.filter((o) => o.remote), addresses: s.addresses } : {}) }));
       hist.current = []; setRoute({ name: 'home', params: {} }); toast(t(inTelegram ? 'Данные на устройстве очищены' : 'Данные сброшены'));
     },
@@ -760,7 +751,6 @@ function App() {
   switch (route.name) {
     case 'builder': screen = <Builder />; break;
     case 'menu': screen = <Menu initialCat={route.params.cat} />; break;
-    case 'challenges': screen = <Challenges />; break;
     case 'saved': screen = <MyBurgers />; break;
     case 'cart': screen = <Cart />; break;
     case 'checkout': screen = <Checkout />; break;

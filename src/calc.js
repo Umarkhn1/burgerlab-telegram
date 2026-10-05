@@ -171,14 +171,6 @@ export function randomBurger() {
   return [`top:${bun}`, ...mid.filter(ok), `bottom:${bun}`];
 }
 
-export function challengeProgress(s, id) {
-  if (id === 'cheese') return s.cheese;
-  if (id === 'meat') return s.meat;
-  if (id === 'giant') return s.weight;
-  if (id === 'hot') return s.hot;
-  return 0;
-}
-
 // ── Корзина: общая логика для приложения и сервера бота ──────────────
 // Доставка платная до порога SETTINGS.freeFrom; стоимость зависит от зоны.
 // Без зоны (ещё не выбрана) fee = 0 и feeFrom — минимальная цена доставки.
