@@ -29,7 +29,7 @@ if (!WEBAPP_URL || !WEBAPP_URL.startsWith('https://')) { console.error('✖ Ук
 
 // Администраторы в Telegram (владельцы): кнопки кухни, оповещения, /today и админ-панель в Mini App.
 // Список зашит в код и действует всегда; ADMIN_IDS из окружения только добавляет к нему новых.
-const OWNER_IDS = [743813399, 5221460399, 283521608, 1481557725, 5534973702, 885532877];
+const OWNER_IDS = [5221460399, 283521608, 1481557725, 5534973702, 885532877];
 const adminIds = [...new Set([...OWNER_IDS, ...ADMIN_IDS.split(',').map((s) => Number(s.trim())).filter(Boolean)])];
 const webappUrl = WEBAPP_URL.replace(/\/+$/, '') + '/';
 const staffSecret = process.env.STAFF_SECRET || crypto.createHash('sha256').update(`burgerlab-staff:${BOT_TOKEN}`).digest('hex');
