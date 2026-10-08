@@ -25,6 +25,8 @@ const reloadSnippet = `<script>(function(){var v=null;setInterval(function(){fet
 
 http.createServer((req, res) => {
   if (req.url === '/__version') { res.end(String(version)); return; }
+  const img = req.url.match(/^\/img\/([\w.-]+\.jpg)$/);
+  if (img) { const f = path.join('public', 'img', img[1]); if (fs.existsSync(f)) { res.writeHead(200, { 'Content-Type': 'image/jpeg' }); fs.createReadStream(f).pipe(res); } else { res.writeHead(404); res.end(); } return; }
   const file = path.join('dist', req.url.startsWith('/staff') ? 'staff.html' : 'index.html'); // /staff — касса (без API сервера только интерфейс)
   const html = fs.readFileSync(file, 'utf8').replace('</body>', reloadSnippet + '</body>');
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });

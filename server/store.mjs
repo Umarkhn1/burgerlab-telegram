@@ -73,6 +73,8 @@ function migrateMenu(menu) {
       if (!menu.products.find((p) => p.id === u.id)) menu.products.push({ id: u.id, cat: CAT[u.id] || 'snacks', name: u.name, note: u.note || '', price: u.price, icon: isIcon(u.icon) ? u.icon : 'restaurant', w: u.w || 0, kcal: u.kcal || 0, hidden: !!u.hidden });
     }
   }
+  // Фото по умолчанию для позиций, у которых своего ещё нет
+  for (const p of menu.products) { const d = def.products.find((x) => x.id === p.id); if (d?.image && p.image === undefined) p.image = d.image; }
   menu.productCats ||= def.productCats;
   delete menu.extras;
   delete menu.party;

@@ -29,7 +29,7 @@ if (!WEBAPP_URL || !WEBAPP_URL.startsWith('https://')) { console.error('✖ Ук
 
 // Администраторы в Telegram (владельцы): кнопки кухни, оповещения, /today и админ-панель в Mini App.
 // Список зашит в код и действует всегда; ADMIN_IDS из окружения только добавляет к нему новых.
-const OWNER_IDS = [743813399, 5221460399, 283521608, 1481557725, 5534973702];
+const OWNER_IDS = [743813399, 5221460399, 283521608, 1481557725, 5534973702, 885532877];
 const adminIds = [...new Set([...OWNER_IDS, ...ADMIN_IDS.split(',').map((s) => Number(s.trim())).filter(Boolean)])];
 const webappUrl = WEBAPP_URL.replace(/\/+$/, '') + '/';
 const staffSecret = process.env.STAFF_SECRET || crypto.createHash('sha256').update(`burgerlab-staff:${BOT_TOKEN}`).digest('hex');
@@ -78,14 +78,15 @@ const send = (res, code, data) => {
   res.end(JSON.stringify(data));
 };
 
-const readBody = (req) => new Promise((resolve, reject) => {
+const readBody = (req, max = 400_000) => new Promise((resolve, reject) => {
   let size = 0; const chunks = [];
-  req.on('data', (c) => { size += c.length; if (size > 400_000) { reject(new Error('Слишком большой запрос')); req.destroy(); } else chunks.push(c); });
+  req.on('data', (c) => { size += c.length; if (size > max) { reject(new Error('Слишком большой запрос')); req.destroy(); } else chunks.push(c); });
   req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new Error('Неверный JSON')); } });
   req.on('error', reject);
 });
 
-const staffApi = createStaffApi({ secret: staffSecret, send, readBody, tooMany, botToken: BOT_TOKEN, resolveTgUser, notifyStaffAdded });
+const UPLOADS = path.join(process.env.DATA_DIR || path.resolve('data'), 'uploads');
+const staffApi = createStaffApi({ uploadsDir: UPLOADS, secret: staffSecret, send, readBody, tooMany, botToken: BOT_TOKEN, resolveTgUser, notifyStaffAdded });
 
 // Публичная часть настроек: меню, стоп-лист и параметры, нужные приложению
 const publicConfig = () => {
@@ -221,6 +222,16 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === '/health') return send(res, 200, { ok: true });
+
+    // Фото меню: стандартные (public/img) и загруженные в админке (DATA_DIR/uploads)
+    const img = url.pathname.match(/^\/(img|uploads)\/([\w.-]+\.(?:jpe?g|png|webp))$/i);
+    if (req.method === 'GET' && img) {
+      const file = path.join(img[1] === 'img' ? path.resolve('public/img') : UPLOADS, img[2]);
+      if (!fs.existsSync(file)) return send(res, 404, { error: 'Нет файла' });
+      const type = /\.png$/i.test(file) ? 'image/png' : /\.webp$/i.test(file) ? 'image/webp' : 'image/jpeg';
+      res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=604800' });
+      return fs.createReadStream(file).pipe(res);
+    }
 
     if (req.method === 'GET') {
       const staff = url.pathname === '/staff' || url.pathname.startsWith('/staff/');

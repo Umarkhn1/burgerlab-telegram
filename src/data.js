@@ -97,7 +97,8 @@ export const PROD = {};
 // Разделы, которые предлагаем «добавить к заказу» в корзине
 export const UPSELL_CATS = ['sauces', 'drinks', 'snacks', 'desserts'];
 
-// keys — слои бургера (картинка и «изменить состав» в конструкторе), spicy — можно выбрать «острый / не острый»
+// keys — слои бургера (картинка и «изменить состав» в конструкторе), image — фото (public/img или загруженное в админке),
+// spicy — можно выбрать «острый / не острый»
 export const PRODUCTS = [
   { id: 'b_classic', cat: 'burgers', name: 'Классический', nameUz: 'Klassik', note: 'Говядина, чеддер, овощи, BurgerLab Sauce', noteUz: "Mol go'shti, chedder, sabzavotlar, BurgerLab Sauce", price: 39000, hit: true, spicy: true, keys: B('brioche', 'labsauce', 'lettuce', 'tomato', 'onion', 'cheddar', 'beef') },
   { id: 'b_cheese', cat: 'burgers', name: 'Чизбургер', nameUz: 'Chizburger', note: 'Двойной чеддер и маринованные огурцы', noteUz: "Ikki qavat chedder va tuzlangan bodring", price: 35000, spicy: true, keys: B('potato', 'ketchup', 'mustard', 'pickles', 'cheddar', 'beef', 'cheddar') },
@@ -106,31 +107,31 @@ export const PRODUCTS = [
   { id: 'b_fire', cat: 'burgers', name: 'Чили Файр', nameUz: 'Chili Fayr', note: 'Халапеньо, шрирача, угольная булочка', noteUz: "Xalapenyo, shriracha, ko'mir bulochka", price: 45000, spicy: true, keys: B('charcoal', 'sriracha', 'jalapeno', 'poppers', 'cheddar', 'beef', 'pepper', 'onion') },
   { id: 'b_wagyu', cat: 'burgers', name: 'Вагю Рояль', nameUz: 'Vagyu Royal', note: 'Мраморная говядина, трюфельный майонез', noteUz: "Marmar mol go'shti, tryufelli mayonez", price: 89000, keys: B('brioche', 'truffle', 'lettuce', 'gouda', 'wagyu', 'caramel', 'mushroom') },
 
-  { id: 'h_classic', cat: 'hotdogs', name: 'Классический хот-дог', nameUz: 'Klassik hot-dog', note: 'Говяжья сосиска, кетчуп, горчица', noteUz: "Mol go'shti sosiskasi, ketchup, xantal", price: 22000, w: 180, kcal: 420, hit: true, spicy: true },
-  { id: 'h_danish', cat: 'hotdogs', name: 'Датский хот-дог', nameUz: 'Daniya hot-dogi', note: 'Хрустящий лук, огурцы, соус ремулад', noteUz: "Qarsildoq piyoz, bodring, remulad sousi", price: 26000, w: 200, kcal: 480, spicy: true },
-  { id: 'h_chili', cat: 'hotdogs', name: 'Чили-дог', nameUz: 'Chili-dog', note: 'Острый соус чили, халапеньо, чеддер', noteUz: "Achchiq chili sousi, xalapenyo, chedder", price: 28000, w: 220, kcal: 530, spicy: true },
-  { id: 'h_cheese', cat: 'hotdogs', name: 'Сырный хот-дог', nameUz: 'Pishloqli hot-dog', note: 'Сырный соус и моцарелла', noteUz: "Pishloq sousi va motsarella", price: 25000, w: 200, kcal: 510 },
+  { id: 'h_classic', cat: 'hotdogs', image: '/img/h_classic.jpg', name: 'Классический хот-дог', nameUz: 'Klassik hot-dog', note: 'Говяжья сосиска, кетчуп, горчица', noteUz: "Mol go'shti sosiskasi, ketchup, xantal", price: 22000, w: 180, kcal: 420, hit: true, spicy: true },
+  { id: 'h_danish', cat: 'hotdogs', image: '/img/h_danish.jpg', name: 'Датский хот-дог', nameUz: 'Daniya hot-dogi', note: 'Хрустящий лук, огурцы, соус ремулад', noteUz: "Qarsildoq piyoz, bodring, remulad sousi", price: 26000, w: 200, kcal: 480, spicy: true },
+  { id: 'h_chili', cat: 'hotdogs', image: '/img/h_chili.jpg', name: 'Чили-дог', nameUz: 'Chili-dog', note: 'Острый соус чили, халапеньо, чеддер', noteUz: "Achchiq chili sousi, xalapenyo, chedder", price: 28000, w: 220, kcal: 530, spicy: true },
+  { id: 'h_cheese', cat: 'hotdogs', image: '/img/h_cheese.jpg', name: 'Сырный хот-дог', nameUz: 'Pishloqli hot-dog', note: 'Сырный соус и моцарелла', noteUz: "Pishloq sousi va motsarella", price: 25000, w: 200, kcal: 510 },
 
-  { id: 'pp_chicken', cat: 'healthy', name: 'ПП-сет с курицей', nameUz: 'Tovuqli PP-set', note: 'Курица гриль, киноа, свежие овощи', noteUz: "Grilda tovuq, kinoa, yangi sabzavotlar", price: 42000, w: 350, kcal: 410, hit: true },
+  { id: 'pp_chicken', cat: 'healthy', image: '/img/pp_chicken.jpg', name: 'ПП-сет с курицей', nameUz: 'Tovuqli PP-set', note: 'Курица гриль, киноа, свежие овощи', noteUz: "Grilda tovuq, kinoa, yangi sabzavotlar", price: 42000, w: 350, kcal: 410, hit: true },
   { id: 'pp_lettuce', cat: 'healthy', name: 'Бургер в листьях салата', nameUz: 'Salat bargida burger', note: 'Без булочки: говядина, авокадо, томаты', noteUz: "Bulochkasiz: mol go'shti, avokado, pomidor", price: 39000, w: 280, kcal: 330 },
-  { id: 'pp_bowl', cat: 'healthy', name: 'Боул с лососем', nameUz: "Losos bilan boul", note: 'Рис, лосось, огурец, эдамаме', noteUz: "Guruch, losos, bodring, edamame", price: 55000, w: 330, kcal: 460 },
+  { id: 'pp_bowl', cat: 'healthy', image: '/img/pp_bowl.jpg', name: 'Боул с лососем', nameUz: "Losos bilan boul", note: 'Рис, лосось, огурец, эдамаме', noteUz: "Guruch, losos, bodring, edamame", price: 55000, w: 330, kcal: 460 },
 
-  { id: 'up_fries', cat: 'snacks', name: 'Картофель фри', nameUz: 'Kartoshka fri', note: 'Хрустящий, 150 г', noteUz: 'Qarsildoq, 150 g', price: 12000, icon: 'fastfood', w: 150, kcal: 410, hit: true },
-  { id: 's_nuggets', cat: 'snacks', name: 'Наггетсы, 6 шт', nameUz: 'Nagetslar, 6 dona', note: 'Куриные, с соусом на выбор', noteUz: "Tovuqli, sous tanlash mumkin", price: 18000, icon: 'tapas', w: 120, kcal: 300 },
-  { id: 's_rings', cat: 'snacks', name: 'Луковые кольца', nameUz: 'Piyoz halqalari', note: '8 штук в панировке', noteUz: '8 dona, panirovkada', price: 14000, icon: 'tapas', w: 110, kcal: 330 },
+  { id: 'up_fries', cat: 'snacks', image: '/img/up_fries.jpg', name: 'Картофель фри', nameUz: 'Kartoshka fri', note: 'Хрустящий, 150 г', noteUz: 'Qarsildoq, 150 g', price: 12000, icon: 'fastfood', w: 150, kcal: 410, hit: true },
+  { id: 's_nuggets', cat: 'snacks', image: '/img/s_nuggets.jpg', name: 'Наггетсы, 6 шт', nameUz: 'Nagetslar, 6 dona', note: 'Куриные, с соусом на выбор', noteUz: "Tovuqli, sous tanlash mumkin", price: 18000, icon: 'tapas', w: 120, kcal: 300 },
+  { id: 's_rings', cat: 'snacks', image: '/img/s_rings.jpg', name: 'Луковые кольца', nameUz: 'Piyoz halqalari', note: '8 штук в панировке', noteUz: '8 dona, panirovkada', price: 14000, icon: 'tapas', w: 110, kcal: 330 },
 
-  { id: 'up_dip', cat: 'sauces', name: 'BurgerLab Sauce', nameUz: 'BurgerLab Sauce', note: 'Фирменный, 50 мл', noteUz: 'Firmaviy, 50 ml', price: 3000, icon: 'water_drop', w: 50, kcal: 160 },
-  { id: 'sc_cheese', cat: 'sauces', name: 'Сырный соус', nameUz: 'Pishloq sousi', note: '50 мл', noteUz: '50 ml', price: 3000, icon: 'water_drop', w: 50, kcal: 150 },
-  { id: 'sc_bbq', cat: 'sauces', name: 'Соус BBQ', nameUz: 'BBQ sousi', note: '50 мл', noteUz: '50 ml', price: 3000, icon: 'water_drop', w: 50, kcal: 90 },
-  { id: 'sc_garlic', cat: 'sauces', name: 'Чесночный соус', nameUz: 'Sarimsoqli sous', note: '50 мл', noteUz: '50 ml', price: 3000, icon: 'water_drop', w: 50, kcal: 170 },
-  { id: 'sc_chili', cat: 'sauces', name: 'Острый чили', nameUz: 'Achchiq chili', note: '50 мл', noteUz: '50 ml', price: 3000, icon: 'water_drop', w: 50, kcal: 60 },
+  { id: 'up_dip', cat: 'sauces', image: '/img/up_dip.jpg', name: 'BurgerLab Sauce', nameUz: 'BurgerLab Sauce', note: 'Фирменный, 50 мл', noteUz: 'Firmaviy, 50 ml', price: 3000, icon: 'water_drop', w: 50, kcal: 160 },
+  { id: 'sc_cheese', cat: 'sauces', image: '/img/sc_cheese.jpg', name: 'Сырный соус', nameUz: 'Pishloq sousi', note: '50 мл', noteUz: '50 ml', price: 3000, icon: 'water_drop', w: 50, kcal: 150 },
+  { id: 'sc_bbq', cat: 'sauces', image: '/img/sc_bbq.jpg', name: 'Соус BBQ', nameUz: 'BBQ sousi', note: '50 мл', noteUz: '50 ml', price: 3000, icon: 'water_drop', w: 50, kcal: 90 },
+  { id: 'sc_garlic', cat: 'sauces', image: '/img/sc_garlic.jpg', name: 'Чесночный соус', nameUz: 'Sarimsoqli sous', note: '50 мл', noteUz: '50 ml', price: 3000, icon: 'water_drop', w: 50, kcal: 170 },
+  { id: 'sc_chili', cat: 'sauces', image: '/img/sc_chili.jpg', name: 'Острый чили', nameUz: 'Achchiq chili', note: '50 мл', noteUz: '50 ml', price: 3000, icon: 'water_drop', w: 50, kcal: 60 },
 
-  { id: 'up_drink', cat: 'drinks', name: 'Лимонад BurgerLab', nameUz: 'BurgerLab limonadi', note: 'Апельсин-маракуйя, 0,5 л', noteUz: "Apelsin-marakuyya, 0,5 l", price: 9000, icon: 'local_drink', w: 500, kcal: 180 },
-  { id: 'd_cola', cat: 'drinks', name: 'Coca-Cola', nameUz: 'Coca-Cola', note: '0,5 л', noteUz: '0,5 l', price: 8000, icon: 'local_drink', w: 500, kcal: 210, hit: true },
-  { id: 'd_water', cat: 'drinks', name: 'Вода без газа', nameUz: 'Gazsiz suv', note: '0,5 л', noteUz: '0,5 l', price: 4000, icon: 'water_bottle', w: 500, kcal: 0 },
-  { id: 'd_ayran', cat: 'drinks', name: 'Айран', nameUz: 'Ayron', note: '0,4 л', noteUz: '0,4 l', price: 6000, icon: 'local_cafe', w: 400, kcal: 120 },
+  { id: 'up_drink', cat: 'drinks', image: '/img/up_drink.jpg', name: 'Лимонад BurgerLab', nameUz: 'BurgerLab limonadi', note: 'Апельсин-маракуйя, 0,5 л', noteUz: "Apelsin-marakuyya, 0,5 l", price: 9000, icon: 'local_drink', w: 500, kcal: 180 },
+  { id: 'd_cola', cat: 'drinks', image: '/img/d_cola.jpg', name: 'Coca-Cola', nameUz: 'Coca-Cola', note: '0,5 л', noteUz: '0,5 l', price: 8000, icon: 'local_drink', w: 500, kcal: 210, hit: true },
+  { id: 'd_water', cat: 'drinks', image: '/img/d_water.jpg', name: 'Вода без газа', nameUz: 'Gazsiz suv', note: '0,5 л', noteUz: '0,5 l', price: 4000, icon: 'water_bottle', w: 500, kcal: 0 },
+  { id: 'd_ayran', cat: 'drinks', image: '/img/d_ayran.jpg', name: 'Айран', nameUz: 'Ayron', note: '0,4 л', noteUz: '0,4 l', price: 6000, icon: 'local_cafe', w: 400, kcal: 120 },
 
-  { id: 'up_dessert', cat: 'desserts', name: 'Чизкейк', nameUz: 'Chizkeyk', note: 'Нью-Йорк, 120 г', noteUz: "Nyu-York, 120 g", price: 16000, icon: 'cake', w: 120, kcal: 390 },
+  { id: 'up_dessert', cat: 'desserts', image: '/img/up_dessert.jpg', name: 'Чизкейк', nameUz: 'Chizkeyk', note: 'Нью-Йорк, 120 г', noteUz: "Nyu-York, 120 g", price: 16000, icon: 'cake', w: 120, kcal: 390 },
 ];
 
 // ── Единый справочник статусов заказа (приложение, касса, бот) ──

@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { STATUSES, MODES, CANCEL_REASONS, STOP, PAYMENTS, applyMenu, applySettings, applyStop } from './data.js';
 import { fmtPrice, fmtTime, fmtDateTime, fmtWeight, fmtCm, layerName, flowOf, nextStatus, isClosed, deadlines, statusInfo, atTime } from './calc.js';
 import { Sheet, Toasts, Icon } from './ui.jsx';
-import { PageHead, Switch, StopList, History, Reports, MenuEditor, Settings, Delivery, Staff, Audit, Promos, CookCode } from './staffAdmin.jsx';
+import { PageHead, Switch, StopList, History, Reports, MenuEditor, Settings, Delivery, Staff, Audit, Promos } from './staffAdmin.jsx';
 
 const SESSION_KEY = 'burgerlab:staff';
 const SOUND_KEY = 'burgerlab:staff-sound';
@@ -24,7 +24,6 @@ const SECTIONS = [
   { id: 'settings', t: 'Настройки', icon: 'tune', perm: 'settings', group: 'Управление' },
   { id: 'delivery', t: 'Доставка', icon: 'delivery_dining', perm: 'settings', group: 'Управление' },
   { id: 'staff', t: 'Сотрудники', icon: 'group', perm: 'staff', group: 'Управление' },
-  { id: 'cookcode', t: 'Код для повара', icon: 'key', perm: 'staff', group: 'Управление' },
   { id: 'audit', t: 'Журнал', icon: 'history', perm: 'audit', group: 'Управление' },
 ];
 const ROLE_NAMES = { admin: 'Администратор', cashier: 'Кассир', cook: 'Повар' };
@@ -698,7 +697,6 @@ export function StaffApp({ embedded = false, initData = '', onClientMode }) {
           {view === 'desk' && <Desk orders={orders} now={now} act={act} openOrder={setOpenId} freshIds={freshIds} />}
           {view === 'kitchen' && <Kitchen orders={orders} now={now} act={act} />}
           {view === 'promos' && <Promos {...P} />}
-          {view === 'cookcode' && <CookCode {...P} />}
           {view === 'stop' && <StopList {...P} />}
           {view === 'history' && <History {...P} />}
           {view === 'reports' && <Reports {...P} />}

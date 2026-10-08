@@ -449,6 +449,7 @@ export function HotdogArt({ w = 120, sauce = '#F5A20F', spicy = false }) {
 
 // Картинка товара меню: бургер по слоям, хот-дог или иконка в кружке
 export function ProductArt({ p, size = 120 }) {
+  if (p?.image) return <img className="prod-img" src={p.image} alt="" loading="lazy" decoding="async" draggable="false" />;
   if (p?.keys?.length) return <BurgerStack layers={toLayersCached(p.keys)} maxH={size} maxW={size} maxScale={0.6} animate={false} />;
   if (p?.cat === 'hotdogs') return <HotdogArt w={size} spicy={/чили|chili/i.test(p.name || '')} />;
   return <span className="prod-ico" style={{ width: size * 0.62, height: size * 0.62 }}><span className="ms fill" style={{ fontSize: size * 0.32 }}>{p?.icon || (p?.cat === 'healthy' ? 'eco' : p?.cat === 'drinks' ? 'local_drink' : p?.cat === 'sauces' ? 'water_drop' : 'restaurant')}</span></span>;

@@ -263,6 +263,47 @@ function IconPick({ value, onChange }) {
   );
 }
 
+// Фото уменьшаем в браузере (до 720 px, JPEG) — на сервер уходит ~60–120 КБ
+function shrinkImage(file, max = 720) {
+  return new Promise((resolve, reject) => {
+    if (!/^image\//.test(file.type)) return reject(new Error('Выберите файл с картинкой'));
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => reject(new Error('Не удалось открыть картинку'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function PhotoField({ p, api, toast, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const pick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    try { const { url } = await api('/staff/upload', { method: 'POST', body: { dataUrl: await shrinkImage(file) } }); onChange(url); toast('Фото загружено — не забудьте сохранить меню', 'ok'); }
+    catch (er) { toast(er.message, 'err'); }
+    setBusy(false);
+  };
+  return (
+    <div className="photo-fld">
+      <span className="photo-prev">{p.image ? <img src={p.image} alt="" /> : <Icon name="photo_camera" />}</span>
+      <div className="photo-act">
+        <label className={`btn ghost sm ${busy ? 'disabled' : ''}`}><Icon name="upload" />{busy ? 'Загружаем…' : p.image ? 'Заменить фото' : 'Загрузить фото'}<input type="file" accept="image/*" onChange={pick} hidden disabled={busy} /></label>
+        {p.image && <button className="btn ghost sm" onClick={() => onChange('')}><Icon name="close" />Убрать</button>}
+        <small className="muted-t">Фото показывается в меню, корзине и в «Добавить к заказу». Лучше горизонтальное, 4:3.</small>
+      </div>
+    </div>
+  );
+}
+
 const PRODUCT_ICONS = ['fastfood', 'lunch_dining', 'kebab_dining', 'eco', 'tapas', 'water_drop', 'local_drink', 'water_bottle', 'local_cafe', 'sports_bar', 'cake', 'icecream', 'cookie', 'local_pizza', 'ramen_dining', 'rice_bowl', 'egg', 'bakery_dining', 'restaurant'];
 
 export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
@@ -338,6 +379,8 @@ export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
                       <Field label="Раздел"><select className="in" value={p.cat} onChange={(e) => edit('products', p.id, { cat: e.target.value })}>{m.productCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
                       {!p.keys?.length && p.cat !== 'hotdogs' && <Field label="Иконка"><div className="icon-pick"><Icon name={p.icon || 'restaurant'} /><select className="in sm" value={p.icon || 'restaurant'} onChange={(e) => edit('products', p.id, { icon: e.target.value })}>{PRODUCT_ICONS.map((x) => <option key={x} value={x}>{x}</option>)}</select></div></Field>}
                     </div>
+                    <h4 className="st-h4">Фото</h4>
+                    <PhotoField p={p} api={api} toast={toast} onChange={(image) => edit('products', p.id, { image })} />
                     {p.keys?.length > 0 && <p className="muted-t pe-keys"><Icon name="lunch_dining" /> Состав (сверху вниз): {p.keys.map(layerName).join(' · ')}. Вес и калории считаются по слоям.</p>}
                     <div className="chk-row">
                       <Check on={!!p.hit} onChange={(v) => edit('products', p.id, { hit: v })}>Хит продаж</Check>
@@ -513,7 +556,7 @@ export function Promos({ api, toast }) {
 }
 
 // ── Код для повара: 6 цифр, обновляется каждую минуту ──
-export function CookCode({ api, toast }) {
+export function CookCode({ api, toast, embedded }) {
   const [c, setC] = useState(null);
   const [left, setLeft] = useState(0);
   const load = () => api('/staff/cook-code').then((d) => { setC(d.code); setLeft(Math.ceil(d.expiresIn / 1000)); }).catch((e) => toast(e.message, 'err'));
@@ -530,7 +573,8 @@ export function CookCode({ api, toast }) {
   const url = `${location.origin}/staff?cook`;
   return (
     <>
-      <PageHead title="Код для повара" sub="Повар открывает кассу на сайте, выбирает «Повар» и вводит этот код. Код меняется каждую минуту" />
+      {!embedded && <PageHead title="Код для повара" sub="Повар открывает кассу на сайте, выбирает «Повар» и вводит этот код. Код меняется каждую минуту" />}
+      {embedded && <p className="muted-t cc-lead">Повар открывает кассу на сайте, выбирает «Повар» и вводит этот код. Код меняется каждую минуту.</p>}
       <div className="cook-code card">
         <div className="cc-digits" aria-live="polite">{(c || '······').split('').map((d, i) => <span key={i}>{d}</span>)}</div>
         <div className="cc-ring" style={{ '--p': `${(left / 60) * 100}%` }}><b>{left}</b><small>сек</small></div>
@@ -779,60 +823,15 @@ function TgStaff({ api, toast, user }) {
   );
 }
 
-// ── Сотрудники ──
+// ── Сотрудники: из Telegram (администратор, кассир, повар) и код входа повара — на одной странице ──
 export function Staff({ api, toast, user }) {
-  const [list, setList] = useState([]);
-  const [roles, setRoles] = useState({});
-  const [f, setF] = useState({ login: '', name: '', role: 'cashier', password: '' });
-  const [show, setShow] = useState(false);
-  const load = () => api('/staff/users').then((d) => { setList(d.users); setRoles(d.roles); }).catch((e) => toast(e.message, 'err'));
-  useEffect(() => { load(); }, []);
-  const addUser = async () => {
-    try { await api('/staff/users', { method: 'POST', body: f }); toast(`Сотрудник ${f.login} добавлен`, 'ok'); setF({ login: '', name: '', role: 'cashier', password: '' }); load(); }
-    catch (e) { toast(e.message, 'err'); }
-  };
-  const upd = async (u, body, msg) => {
-    try { await api(`/staff/users/${u.id}`, { method: 'PUT', body }); toast(msg, 'ok'); load(); }
-    catch (e) { toast(e.message, 'err'); }
-  };
-  const resetPass = (u) => {
-    const p = window.prompt(`Новый пароль для ${u.login} (минимум 6 символов):`);
-    if (p) upd(u, { password: p }, 'Пароль изменён — сотруднику нужно войти заново');
-  };
+  const [tab, setTab] = useState('team');
   return (
     <>
-      <PageHead title="Сотрудники" sub="Кассир: заказы, статусы, история, стоп-лист. Администратор: всё, включая меню, настройки и отчёты" />
-      <TgStaff api={api} toast={toast} user={user} />
-      <h4 className="st-h4 mt">Вход по логину и паролю (касса в браузере, /staff)</h4>
-      <div className="card tbl-card">
-        <table className="tbl">
-          <thead><tr><th>Сотрудник</th><th>Роль</th><th>Активен</th><th /></tr></thead>
-          <tbody>
-            {list.map((u) => (
-              <tr key={u.id} className={u.active ? '' : 'muted-row'}>
-                <td><span className="who"><span className="st-ava sm">{(u.name || u.login)[0].toUpperCase()}</span><span><b>{u.name}</b>{u.id === user.id && <em className="pill">вы</em>}<small>{u.login}</small></span></span></td>
-                <td><select className="in sm" value={u.role} onChange={(e) => upd(u, { role: e.target.value }, 'Роль изменена')}>{Object.entries(roles).map(([k, r]) => <option key={k} value={k}>{r.t}</option>)}</select></td>
-                <td><Switch on={u.active} onChange={(v) => upd(u, { active: v }, v ? 'Сотрудник включён' : 'Сотрудник отключён')} label="Активен" /></td>
-                <td className="r"><button className="btn ghost sm" onClick={() => resetPass(u)}><Icon name="key" />Пароль</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <Card icon="add_circle" title="Новый сотрудник" className="mt">
-        <div className="fld-grid">
-          <Field label="Логин"><input className="in" value={f.login} onChange={(e) => setF({ ...f, login: e.target.value })} autoComplete="off" /></Field>
-          <Field label="Имя"><input className="in" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-          <Field label="Роль"><select className="in" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>{Object.entries(roles).map(([k, r]) => <option key={k} value={k}>{r.t}</option>)}</select></Field>
-          <Field label="Пароль" hint="Минимум 6 символов">
-            <div className="in-wrap">
-              <input className="in" type={show ? 'text' : 'password'} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="new-password" />
-              <button type="button" className="in-act" onClick={() => setShow(!show)} aria-label={show ? 'Скрыть пароль' : 'Показать пароль'}><Icon name={show ? 'visibility_off' : 'visibility'} /></button>
-            </div>
-          </Field>
-        </div>
-        <div className="st-row"><button className="btn primary sm" onClick={addUser} disabled={!f.login || f.password.length < 6}><Icon name="add" />Добавить</button></div>
-      </Card>
+      <PageHead title="Сотрудники" sub="Администратор — всё. Кассир — заказы, статусы, стоп-лист. Повар — только экран «Кухня»">
+        <Seg value={tab} onChange={setTab} options={[['team', 'Сотрудники'], ['cook', 'Код для повара']]} />
+      </PageHead>
+      {tab === 'team' ? <TgStaff api={api} toast={toast} user={user} /> : <CookCode api={api} toast={toast} embedded />}
     </>
   );
 }

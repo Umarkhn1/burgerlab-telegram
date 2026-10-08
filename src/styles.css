@@ -1331,3 +1331,26 @@ html.theme-anim, html.theme-anim * { transition: background-color .3s ease, bord
 .hero-art.hc { height: 300px; }
 .hc-slot { bottom: 30px; }
 @media (min-width: 1024px) { .cart-layout { grid-template-columns: minmax(0, 1fr) 360px; } }
+
+/* ---------- Фото позиций меню ---------- */
+.prod-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.p-art, .ps-art, .ci-art, .up-art, .pe-art, .th-art { position: relative; overflow: hidden; }
+.p-art:has(.prod-img) { padding-top: 0; }
+.ps-art:has(.prod-img) { height: 230px; }
+.th-art:has(.prod-img) { align-self: stretch; min-height: 120px; border-radius: 18px; }
+/* «Добавить к заказу»: фото во всю ширину карточки */
+.upsell-row .up-item { width: 140px; padding: 0 0 10px; overflow: hidden; gap: 2px; }
+.upsell-row .up-item > b, .upsell-row .up-item > small, .upsell-row .up-item > .up-price { padding: 0 10px; }
+.upsell-row .up-art { height: 92px; margin: 0 0 6px; align-self: stretch; background: var(--beige-2); }
+.upsell-row .up-art .prod-ico { width: 46px !important; height: 46px !important; }
+.upsell-row .up-item.in { border-color: var(--green); }
+/* админка: поле фото */
+.photo-fld { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.photo-prev { width: 120px; height: 90px; border-radius: 14px; background: var(--soft); display: grid; place-items: center; overflow: hidden; flex: none; color: var(--ink-3); }
+.photo-prev img { width: 100%; height: 100%; object-fit: cover; }
+.photo-prev .ms { font-size: 30px; }
+.photo-act { flex: 1 1 180px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.photo-act small { flex-basis: 100%; }
+.photo-act label.btn { cursor: pointer; }
+.photo-act label.disabled { opacity: .6; pointer-events: none; }
+.cc-lead { margin-bottom: 12px; }

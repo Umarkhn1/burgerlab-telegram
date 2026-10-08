@@ -1,5 +1,7 @@
 // API кассы и админ-панели: вход сотрудников, роли, заказы, стоп-лист, меню, настройки, отчёты.
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { hashPassword, checkPassword, signToken, verifyToken, validateInitData } from './auth.mjs';
 import {
   getRev, getConfRev, getConf, activeOrders, listOrders, getOrder, setStop, setMenu, setSettings,
@@ -56,7 +58,7 @@ const tgStaffUser = (t, role) => ({
 });
 const ROLE_T = { admin: 'администратор', cashier: 'кассир', cook: 'повар' };
 
-export function createStaffApi({ secret, send, readBody, tooMany, botToken, resolveTgUser, notifyStaffAdded }) {
+export function createStaffApi({ secret, send, readBody, tooMany, botToken, resolveTgUser, notifyStaffAdded, uploadsDir }) {
   const who = (u) => `${u.name} (${u.login})`;
 
   function auth(req, perm) {
@@ -302,6 +304,20 @@ export function createStaffApi({ secret, send, readBody, tooMany, botToken, reso
       return { ok: true };
     }],
 
+    // Фото позиции меню: картинка уже уменьшена в браузере, сохраняем файл и отдаём адрес
+    ['POST', /^\/api\/staff\/upload$/, async (req) => {
+      auth(req, 'menu');
+      const { dataUrl } = await readBody(req, 3_000_000);
+      const m = String(dataUrl || '').match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+      if (!m) fail(400, 'Нужна картинка JPG, PNG или WebP');
+      const buf = Buffer.from(m[2], 'base64');
+      if (buf.length > 1_500_000) fail(400, 'Фото больше 1,5 МБ — выберите поменьше');
+      const name = `${crypto.createHash('sha1').update(buf).digest('hex').slice(0, 16)}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
+      fs.mkdirSync(uploadsDir, { recursive: true });
+      fs.writeFileSync(path.join(uploadsDir, name), buf);
+      return { url: `/uploads/${name}` };
+    }],
+
     // ── Промокоды ──
     ['GET', /^\/api\/staff\/promos$/, async (req) => {
       auth(req, 'promos');
@@ -402,6 +418,7 @@ function validateMenu(m, prev) {
       note: str(p.note, 100, 'описание', false), noteUz: str(p.noteUz, 100, 'noteUz', false) || undefined,
       price: num(p.price, 0, 10_000_000, `Цена «${p.name}»`), w: num(p.w || 0, 0, 10000, 'Вес'), kcal: num(p.kcal || 0, 0, 20000, 'Калории'),
       icon: iconOk(p.icon) ? p.icon : undefined, keys: keys.length ? keys : undefined, hit: !!p.hit, spicy: !!p.spicy, hidden: !!p.hidden,
+      image: /^\/(img|uploads)\/[\w.-]+\.(jpe?g|png|webp)$/i.test(p.image || '') || /^https:\/\/[^\s"'<>]{8,400}$/.test(p.image || '') ? p.image : '',
     };
   });
   const all = [...ingredients, ...products].map((x) => x.id);
