@@ -281,24 +281,23 @@ function shrinkImage(file, max = 720) {
   });
 }
 
-function PhotoField({ p, api, toast, onChange }) {
-  const [busy, setBusy] = useState(false);
-  const pick = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setBusy(true);
-    try { const { url } = await api('/staff/upload', { method: 'POST', body: { dataUrl: await shrinkImage(file) } }); onChange(url); toast('Фото загружено — не забудьте сохранить меню', 'ok'); }
-    catch (er) { toast(er.message, 'err'); }
-    setBusy(false);
-  };
+// Загрузка фото: уменьшаем в браузере и отправляем на сервер. Возвращает адрес картинки.
+async function uploadPhoto(api, file) {
+  const { url } = await api('/staff/upload', { method: 'POST', body: { dataUrl: await shrinkImage(file) } });
+  return url;
+}
+
+function PhotoField({ p, busy, onPick, onRemove }) {
   return (
     <div className="photo-fld">
-      <span className="photo-prev">{p.image ? <img src={p.image} alt="" /> : <Icon name="photo_camera" />}</span>
+      <label className={`photo-prev ${busy ? 'busy' : ''}`} title="Загрузить фото">
+        {p.image ? <img src={p.image} alt="" /> : <span className="photo-empty"><Icon name="add_a_photo" />Добавить фото</span>}
+        <input type="file" accept="image/*" onChange={onPick} hidden disabled={busy} />
+      </label>
       <div className="photo-act">
-        <label className={`btn ghost sm ${busy ? 'disabled' : ''}`}><Icon name="upload" />{busy ? 'Загружаем…' : p.image ? 'Заменить фото' : 'Загрузить фото'}<input type="file" accept="image/*" onChange={pick} hidden disabled={busy} /></label>
-        {p.image && <button className="btn ghost sm" onClick={() => onChange('')}><Icon name="close" />Убрать</button>}
-        <small className="muted-t">Фото показывается в меню, корзине и в «Добавить к заказу». Лучше горизонтальное, 4:3.</small>
+        <label className={`btn primary sm ${busy ? 'disabled' : ''}`}><Icon name="upload" />{busy ? 'Загружаем…' : p.image ? 'Заменить фото' : 'Загрузить фото'}<input type="file" accept="image/*" onChange={onPick} hidden disabled={busy} /></label>
+        {p.image && <button className="btn ghost sm" onClick={onRemove} disabled={busy}><Icon name="close" />Убрать</button>}
+        <small className="muted-t">Сохраняется сразу. Видно в меню, корзине и в «Добавить к заказу». Лучше горизонтальное фото 4:3.</small>
       </div>
     </div>
   );
@@ -346,6 +345,32 @@ export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
   };
   const productsIn = m.products.filter((p) => p.cat === pcat);
 
+  // Фото сохраняется сразу: на сервер уходит текущее (уже сохранённое) меню + новое фото этой позиции,
+  // поэтому другие несохранённые правки не попадают в меню без кнопки «Сохранить».
+  const [photoBusy, setPhotoBusy] = useState('');
+  const savePhoto = async (pid, image) => {
+    setM((x) => ({ ...x, products: x.products.map((it) => (it.id === pid ? { ...it, image } : it)) }));
+    const base = snapshot();
+    if (!base.products.some((x) => x.id === pid)) { setDirty(true); toast('Фото добавлено — нажмите «Сохранить», чтобы сохранить новую позицию', 'ok'); return; }
+    base.products = base.products.map((x) => (x.id === pid ? { ...x, image } : x));
+    await api('/staff/menu', { method: 'PUT', body: { menu: base } });
+    await reloadConfig();
+    toast(image ? 'Фото сохранено — клиенты уже видят его' : 'Фото убрано', 'ok');
+  };
+  const pickPhoto = (pid) => async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setPhotoBusy(pid);
+    try { await savePhoto(pid, await uploadPhoto(api, file)); } catch (er) { toast(er.message, 'err'); }
+    setPhotoBusy('');
+  };
+  const removePhoto = async (pid) => {
+    setPhotoBusy(pid);
+    try { await savePhoto(pid, ''); } catch (er) { toast(er.message, 'err'); }
+    setPhotoBusy('');
+  };
+
   return (
     <>
       <PageHead title="Меню и цены" sub="Изменения сразу появятся у клиентов и в расчёте заказов">
@@ -362,12 +387,18 @@ export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
             {productsIn.map((p) => (
               <div key={p.id} className={`pe-row ${p.hidden ? 'off' : ''} ${open === p.id ? 'open' : ''}`}>
                 <div className="pe-head" onClick={() => setOpen(open === p.id ? null : p.id)}>
-                  <span className="pe-art"><ProductArt p={p} size={52} /></span>
+                  <label className={`pe-art pe-photo ${photoBusy === p.id ? 'busy' : ''}`} onClick={(e) => e.stopPropagation()} title={p.image ? 'Заменить фото' : 'Загрузить фото'}>
+                    <ProductArt p={p} size={52} />
+                    <span className="pe-cam"><Icon name={photoBusy === p.id ? 'hourglass_top' : 'photo_camera'} /></span>
+                    <input type="file" accept="image/*" onChange={pickPhoto(p.id)} hidden disabled={!!photoBusy} />
+                  </label>
                   <span className="pe-t"><b>{p.name}{p.hit && <em className="pill hit">хит</em>}{p.spicy && <em className="pill">🌶</em>}{p.hidden && <em className="pill">скрыто</em>}</b><small>{fmtPrice(p.price)}{p.note ? ` · ${p.note}` : ''}</small></span>
                   <Icon name="expand_more" className={open === p.id ? 'rot' : ''} />
                 </div>
                 {open === p.id && (
                   <div className="pe-body">
+                    <h4 className="st-h4">Фото</h4>
+                    <PhotoField p={p} busy={photoBusy === p.id} onPick={pickPhoto(p.id)} onRemove={() => removePhoto(p.id)} />
                     <div className="fld-grid">
                       <Field label="Название"><input className="in" value={p.name} onChange={(e) => edit('products', p.id, { name: e.target.value })} /></Field>
                       <Field label="Название (узб.)"><input className="in" value={p.nameUz || ''} onChange={(e) => edit('products', p.id, { nameUz: e.target.value })} /></Field>
@@ -379,8 +410,6 @@ export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
                       <Field label="Раздел"><select className="in" value={p.cat} onChange={(e) => edit('products', p.id, { cat: e.target.value })}>{m.productCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
                       {!p.keys?.length && p.cat !== 'hotdogs' && <Field label="Иконка"><div className="icon-pick"><Icon name={p.icon || 'restaurant'} /><select className="in sm" value={p.icon || 'restaurant'} onChange={(e) => edit('products', p.id, { icon: e.target.value })}>{PRODUCT_ICONS.map((x) => <option key={x} value={x}>{x}</option>)}</select></div></Field>}
                     </div>
-                    <h4 className="st-h4">Фото</h4>
-                    <PhotoField p={p} api={api} toast={toast} onChange={(image) => edit('products', p.id, { image })} />
                     {p.keys?.length > 0 && <p className="muted-t pe-keys"><Icon name="lunch_dining" /> Состав (сверху вниз): {p.keys.map(layerName).join(' · ')}. Вес и калории считаются по слоям.</p>}
                     <div className="chk-row">
                       <Check on={!!p.hit} onChange={(v) => edit('products', p.id, { hit: v })}>Хит продаж</Check>
@@ -394,6 +423,7 @@ export function MenuEditor({ api, toast, reloadConfig, cfgRev }) {
             ))}
             {!productsIn.length && <p className="muted-t">В разделе пока нет позиций</p>}
           </div>
+          <p className="muted-t pe-tip"><Icon name="photo_camera" /> Нажмите на картинку позиции, чтобы загрузить или заменить фото.</p>
           <div className="st-under">
             <button className="btn ghost sm" onClick={() => { const id = newId('pr', m.products); add('products', { id, cat: pcat, name: 'Новая позиция', note: '', price: 20000, w: 200, kcal: 300, icon: pcat === 'drinks' ? 'local_drink' : pcat === 'sauces' ? 'water_drop' : 'restaurant' }); setOpen(id); }}><Icon name="add" />Позиция в «{pcatName}»</button>
             {pcat === 'burgers' && <button className="btn ghost sm" onClick={() => { const id = newId('pr', m.products); add('products', { id, cat: 'burgers', name: 'Новый бургер', note: '', price: 40000, keys: SIZE_PRESETS.find((x) => x.id === 'standard').layers, spicy: true }); setOpen(id); }}><Icon name="lunch_dining" />Бургер со стандартным составом</button>}

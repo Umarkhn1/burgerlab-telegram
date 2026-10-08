@@ -1360,3 +1360,16 @@ html.theme-anim, html.theme-anim * { transition: background-color .3s ease, bord
 .pane-switch button { gap: 6px; }
 .pane-n { font-style: normal; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--ink-3); color: #fff; font-size: 11.5px; font-weight: 800; display: inline-grid; place-items: center; }
 .pane-n.hot { background: var(--orange); }
+
+/* Фото в списке меню: нажал на миниатюру — выбрал фото */
+.pe-photo { cursor: pointer; }
+.pe-cam { position: absolute; right: 3px; bottom: 3px; width: 22px; height: 22px; border-radius: 50%; background: var(--ink); color: var(--bg); display: grid; place-items: center; box-shadow: 0 2px 6px rgba(0, 0, 0, .3); }
+.pe-cam .ms { font-size: 14px; }
+.pe-photo.busy { opacity: .6; }
+.pe-tip { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12.5px; }
+.pe-tip .ms { font-size: 16px; color: var(--orange); }
+.pe-body > .st-h4:first-child { margin-top: 12px; }
+.photo-prev { cursor: pointer; }
+.photo-prev.busy { opacity: .6; pointer-events: none; }
+.photo-empty { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; color: var(--ink-3); }
+.photo-empty .ms { font-size: 28px; color: var(--orange); }
