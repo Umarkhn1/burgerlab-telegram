@@ -15,7 +15,8 @@ import { withZoneNames } from '../src/calc.js';
 
 export const ROLES = {
   admin: { t: 'Администратор', perms: ['orders', 'kitchen', 'history', 'stop', 'eta', 'menu', 'promos', 'settings', 'staff', 'reports', 'audit'] },
-  cashier: { t: 'Кассир', perms: ['orders', 'history', 'stop'] },
+  // Сотрудник: касса и кухня на одном экране (переключатель «Касса / Кухня»)
+  cashier: { t: 'Сотрудник', perms: ['orders', 'kitchen', 'history', 'stop'] },
   cook: { t: 'Повар', perms: ['kitchen'] },
 };
 const COOK_HOURS = 16; // вход повара действует одну смену
@@ -56,7 +57,7 @@ const tgStaffUser = (t, role) => ({
   id: `tg:${t.id}`, tgId: t.id, login: t.username ? `@${t.username}` : `tg${t.id}`, name: [t.first_name, t.last_name].filter(Boolean).join(' ') || 'Сотрудник',
   role, active: true, tg: true,
 });
-const ROLE_T = { admin: 'администратор', cashier: 'кассир', cook: 'повар' };
+const ROLE_T = { admin: 'администратор', cashier: 'сотрудник', cook: 'сотрудник' };
 
 export function createStaffApi({ secret, send, readBody, tooMany, botToken, resolveTgUser, notifyStaffAdded, uploadsDir }) {
   const who = (u) => `${u.name} (${u.login})`;
@@ -267,7 +268,7 @@ export function createStaffApi({ secret, send, readBody, tooMany, botToken, reso
     ['POST', /^\/api\/staff\/tg$/, async (req) => {
       const u = auth(req, 'staff');
       const { query, role } = await readBody(req);
-      if (!ROLES[role]) fail(400, 'Выберите роль');
+      if (!['admin', 'cashier'].includes(role)) fail(400, 'Выберите роль: администратор или сотрудник');
       if (isOwner(String(query || '').trim())) fail(409, 'Это владелец, он уже администратор');
       const r = await resolveTgUser(query);
       if (r.error) fail(404, r.error);
@@ -289,7 +290,7 @@ export function createStaffApi({ secret, send, readBody, tooMany, botToken, reso
       if (u.tgId === e.tgId) fail(400, 'Свою роль и доступ изменить нельзя');
       const b = await readBody(req);
       const next = { ...e };
-      if (b.role != null) { if (!ROLES[b.role]) fail(400, 'Неизвестная роль'); next.role = b.role; }
+      if (b.role != null) { if (!['admin', 'cashier'].includes(b.role)) fail(400, 'Неизвестная роль'); next.role = b.role; }
       if (b.active != null) next.active = !!b.active;
       const what = [next.role !== e.role && `роль → ${ROLE_T[next.role]}`, next.active !== e.active && (next.active ? 'включён' : 'отключён')].filter(Boolean).join(', ');
       await saveTgStaff(next, who(u), `Сотрудник из Telegram изменён: ${what || 'без изменений'}`);

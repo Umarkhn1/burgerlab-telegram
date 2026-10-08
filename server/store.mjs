@@ -220,7 +220,8 @@ export function tgRole(id) {
   if (!id) return null;
   if (isOwner(id)) return 'admin';
   const s = getTgStaff(id);
-  return s && s.active !== false ? s.role : null;
+  // Раньше у сотрудников из Telegram была отдельная роль «Повар» — теперь это сотрудник (касса + кухня)
+  return s && s.active !== false ? (s.role === 'cook' ? 'cashier' : s.role) : null;
 }
 // Кому слать карточки заказов и оповещения, если нет группы кухни
 export const tgStaffIds = () => [...new Set([...owners, ...conf.tgStaff.filter((x) => x.active !== false).map((x) => x.tgId)])];

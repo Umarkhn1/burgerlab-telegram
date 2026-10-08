@@ -35,7 +35,7 @@ export function createBot({ token, webappUrl, kitchenChatId, apiRoot }) {
   const openAppKb = (ctx, text) => {
     const kb = new InlineKeyboard().webApp(text || T(ctx, '🍔 Собрать бургер'), webappUrl);
     const role = ctx && tgRole(ctx.from?.id);
-    return role ? kb.row().webApp(role === 'admin' ? '🛠 Админ-панель' : role === 'cashier' ? '🧾 Касса' : '👨‍🍳 Кухня', `${webappUrl}?panel=1`) : kb;
+    return role ? kb.row().webApp(role === 'admin' ? '🛠 Админ-панель' : '🧾 Касса и кухня', `${webappUrl}?panel=1`) : kb;
   };
 
   // Запоминаем никнейм и имя каждого, кто пишет боту: по @username сотрудника можно найти в админ-панели
@@ -308,10 +308,10 @@ ${tr(lang, 'Котлетками можно оплатить часть след
 
   // Сообщение новому сотруднику: кнопка сразу открывает панель в Mini App
   async function notifyStaffAdded(entry, byName) {
-    const role = entry.role === 'admin' ? 'администратором' : 'кассиром';
+    const role = entry.role === 'admin' ? 'администратором' : 'сотрудником';
     try {
-      await bot.api.sendMessage(entry.tgId, `👋 ${esc(byName)} добавил(а) вас ${role} BurgerLab.\n\nПанель открывается прямо в приложении — вкладка «${entry.role === 'admin' ? 'Админ' : 'Касса'}». Сюда же будут приходить новые заказы и оповещения.`, {
-        parse_mode: 'HTML', reply_markup: new InlineKeyboard().webApp(entry.role === 'admin' ? '🛠 Открыть админ-панель' : '🧾 Открыть кассу', `${webappUrl}?panel=1`),
+      await bot.api.sendMessage(entry.tgId, `👋 ${esc(byName)} добавил(а) вас ${role} BurgerLab.\n\nПанель открывается прямо в приложении: касса и кухня${entry.role === 'admin' ? ', меню, отчёты и настройки' : ''}. Сюда же будут приходить новые заказы и оповещения.`, {
+        parse_mode: 'HTML', reply_markup: new InlineKeyboard().webApp(entry.role === 'admin' ? '🛠 Открыть админ-панель' : '🧾 Открыть кассу и кухню', `${webappUrl}?panel=1`),
       });
       return true;
     } catch { return false; }

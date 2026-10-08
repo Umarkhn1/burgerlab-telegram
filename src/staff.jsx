@@ -14,10 +14,10 @@ const NEW = ['created', 'received'];
 
 // Разделы меню. perm — право, без которого раздел не показывается.
 const SECTIONS = [
-  { id: 'desk', t: 'Касса', icon: 'point_of_sale', perm: 'orders', group: 'Работа' },
-  { id: 'kitchen', t: 'Кухня', icon: 'soup_kitchen', perm: 'kitchen', group: 'Работа' },
+  // Касса и кухня — один раздел с переключателем; повару по коду доступна только кухня
+  { id: 'desk', t: 'Заказы', icon: 'point_of_sale', perm: 'kitchen', group: 'Работа' },
   { id: 'stop', t: 'Стоп-лист', icon: 'block', perm: 'stop', group: 'Работа' },
-  { id: 'history', t: 'Заказы', icon: 'receipt_long', perm: 'history', group: 'Работа' },
+  { id: 'history', t: 'История заказов', icon: 'receipt_long', perm: 'history', group: 'Работа' },
   { id: 'reports', t: 'Отчёты', icon: 'bar_chart', perm: 'reports', group: 'Управление' },
   { id: 'menu', t: 'Меню и цены', icon: 'restaurant_menu', perm: 'menu', group: 'Управление' },
   { id: 'promos', t: 'Промокоды', icon: 'sell', perm: 'promos', group: 'Управление' },
@@ -26,7 +26,7 @@ const SECTIONS = [
   { id: 'staff', t: 'Сотрудники', icon: 'group', perm: 'staff', group: 'Управление' },
   { id: 'audit', t: 'Журнал', icon: 'history', perm: 'audit', group: 'Управление' },
 ];
-const ROLE_NAMES = { admin: 'Администратор', cashier: 'Кассир', cook: 'Повар' };
+const ROLE_NAMES = { admin: 'Администратор', cashier: 'Сотрудник', cook: 'Повар' };
 export const PANEL_T = { admin: 'Админ', cashier: 'Касса', cook: 'Кухня' };
 
 async function request(path, { method = 'GET', body, token, initData } = {}) {
@@ -525,6 +525,28 @@ function Kitchen({ orders, now, act }) {
   );
 }
 
+// «Заказы»: касса и кухня на одном экране. Повар по коду видит только кухню.
+const PANE_KEY = 'burgerlab:staff-pane';
+function OrdersPage({ user, orders, now, act, openOrder, freshIds }) {
+  const canDesk = user.perms.includes('orders');
+  const [pane, setPane] = useState(() => (canDesk ? read(PANE_KEY, 'desk') : 'kitchen'));
+  const choose = (v) => { setPane(v); store(PANE_KEY, v); };
+  const queue = orders.filter((o) => o.status === 'accepted').length;
+  const fresh = orders.filter((o) => NEW.includes(o.status)).length;
+  const view = canDesk ? pane : 'kitchen';
+  return (
+    <>
+      {canDesk && (
+        <div className="pane-switch seg big" role="tablist">
+          <button role="tab" aria-selected={view === 'desk'} className={view === 'desk' ? 'on' : ''} onClick={() => choose('desk')}><Icon name="point_of_sale" />Касса{fresh > 0 && <em className="pane-n hot">{fresh}</em>}</button>
+          <button role="tab" aria-selected={view === 'kitchen'} className={view === 'kitchen' ? 'on' : ''} onClick={() => choose('kitchen')}><Icon name="soup_kitchen" />Кухня{queue > 0 && <em className="pane-n">{queue}</em>}</button>
+        </div>
+      )}
+      {view === 'desk' ? <Desk orders={orders} now={now} act={act} openOrder={openOrder} freshIds={freshIds} /> : <Kitchen orders={orders} now={now} act={act} />}
+    </>
+  );
+}
+
 function Clock() {
   const now = useNow(10000);
   return <span className="st-clock">{fmtTime(now)}</span>;
@@ -683,19 +705,18 @@ export function StaffApp({ embedded = false, initData = '', onClientMode }) {
         {!embedded && <Logo />}
         <span className="st-sec"><Icon name={sec.icon} />{sec.t}</span>
         <div className="st-bar-r">
-          {waiting > 0 && <button className="st-alert" onClick={() => setView(user.role === 'cook' ? 'kitchen' : 'desk')}><Icon name="notifications_active" fill />{waiting}<span className="hide-s">&nbsp;{waiting === 1 ? 'новый' : 'новых'}</span></button>}
+          {waiting > 0 && <button className="st-alert" onClick={() => setView('desk')}><Icon name="notifications_active" fill />{waiting}<span className="hide-s">&nbsp;{waiting === 1 ? 'новый' : 'новых'}</span></button>}
           <span className={`st-net ${online ? '' : 'off'}`} title={online ? 'Связь с сервером есть' : 'Нет связи с сервером'}><i />{online ? 'онлайн' : 'нет связи'}</span>
           {!embedded && <Clock />}
           <button className={`icon-btn st-burger ${menuOpen ? 'on' : ''}`} onClick={() => setMenuOpen(!menuOpen)} aria-label="Меню" aria-expanded={menuOpen}><Icon name={menuOpen ? 'close' : 'menu'} /></button>
           <MenuDropdown open={menuOpen} onClose={() => setMenuOpen(false)} user={user} view={view} setView={setView}
-            badges={{ desk: user.role === 'cook' ? 0 : waiting, kitchen: orders.filter((o) => o.status === 'accepted').length, stop: stopCount }} sound={sound} setSound={setSound} theme={theme} setTheme={setTheme} logout={logout} embedded={embedded} onClientMode={onClientMode} />
+            badges={{ desk: waiting, stop: stopCount }} sound={sound} setSound={setSound} theme={theme} setTheme={setTheme} logout={logout} embedded={embedded} onClientMode={onClientMode} />
         </div>
       </header>
       {!online && <div className="st-offline"><Icon name="wifi_off" />Нет связи с сервером. Заказы не потеряются: касса получит их, как только связь восстановится.</div>}
       <main className="st-main">
         <div className="st-page">
-          {view === 'desk' && <Desk orders={orders} now={now} act={act} openOrder={setOpenId} freshIds={freshIds} />}
-          {view === 'kitchen' && <Kitchen orders={orders} now={now} act={act} />}
+          {view === 'desk' && <OrdersPage user={user} orders={orders} now={now} act={act} openOrder={setOpenId} freshIds={freshIds} />}
           {view === 'promos' && <Promos {...P} />}
           {view === 'stop' && <StopList {...P} />}
           {view === 'history' && <History {...P} />}

@@ -760,7 +760,9 @@ export function Delivery({ api, toast, reloadConfig, cfgRev }) {
 }
 
 // ── Сотрудники из Telegram: добавление по ID или @username, имя и никнейм подтягиваются сами ──
-const ROLE_OPTS = [['admin', 'Администратор'], ['cashier', 'Кассир'], ['cook', 'Повар']];
+// Сотрудник — касса и кухня (переключатель «Касса / Кухня» в разделе «Заказы»)
+const ROLE_OPTS = [['admin', 'Администратор'], ['cashier', 'Сотрудник']];
+const roleOf = (r) => (r === 'admin' ? 'admin' : 'cashier');
 
 function TgStaff({ api, toast, user }) {
   const [list, setList] = useState([]);
@@ -809,8 +811,8 @@ function TgStaff({ api, toast, user }) {
                 <small>{x.username ? `@${x.username} · ` : ''}ID {x.tgId}</small>
               </span>
               <span className="tg-ctl">
-                {locked ? <span className="muted-t">{ROLE_OPTS.find(([k]) => k === x.role)?.[1]}</span>
-                  : <select className="in sm" value={x.role} onChange={(e) => upd(x, { role: e.target.value }, 'Роль изменена')}>{ROLE_OPTS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select>}
+                {locked ? <span className="muted-t">{ROLE_OPTS.find(([k]) => k === roleOf(x.role))?.[1]}</span>
+                  : <select className="in sm" value={roleOf(x.role)} onChange={(e) => upd(x, { role: e.target.value }, 'Роль изменена')}>{ROLE_OPTS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select>}
                 {!locked && <Switch on={x.active} onChange={(v) => upd(x, { active: v }, v ? 'Доступ включён' : 'Доступ отключён')} label="Доступ" />}
                 {!locked && <button className="icon-btn sm" onClick={() => del(x)} aria-label="Удалить" title="Удалить"><Icon name="delete" /></button>}
               </span>
@@ -828,7 +830,7 @@ export function Staff({ api, toast, user }) {
   const [tab, setTab] = useState('team');
   return (
     <>
-      <PageHead title="Сотрудники" sub="Администратор — всё. Кассир — заказы, статусы, стоп-лист. Повар — только экран «Кухня»">
+      <PageHead title="Сотрудники" sub="Администратор — всё. Сотрудник — касса и кухня, история заказов, стоп-лист. Повар по коду — только кухня">
         <Seg value={tab} onChange={setTab} options={[['team', 'Сотрудники'], ['cook', 'Код для повара']]} />
       </PageHead>
       {tab === 'team' ? <TgStaff api={api} toast={toast} user={user} /> : <CookCode api={api} toast={toast} embedded />}
